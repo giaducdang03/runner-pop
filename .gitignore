@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+# trọng số model: tự tải lần chạy đầu
+*.pt
+*.onnx
