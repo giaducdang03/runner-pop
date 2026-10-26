@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .types import Cutout
+from .schema import Cutout
 
 
 def to_gray3(rgb_f: np.ndarray) -> np.ndarray:

@@ -15,7 +15,7 @@ import numpy as np
 
 from ..masks import box_to_mask
 from ..registry import Registry
-from ..types import Person, Scene
+from ..schema import Person, Scene
 
 ENGINES = Registry("engine")
 

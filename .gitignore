@@ -4,3 +4,6 @@ __pycache__/
 # trọng số model: tự tải lần chạy đầu
 *.pt
 *.onnx
+
+# ảnh thử + kết quả thử (nặng, không đưa vào git)
+samples/

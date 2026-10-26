@@ -13,7 +13,7 @@ import time
 import uuid
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Dict, List, Literal, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -22,6 +22,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from . import pipeline as P
+from .report import build_report
 from .pipeline import config as C
 
 MAX_SESSIONS = int(os.environ.get("MAX_SESSIONS", "8"))
@@ -34,17 +35,26 @@ app = FastAPI(title="Runner B&W Background", version="1.0")
 # Session store (in-memory, LRU)
 # --------------------------------------------------------------------------
 @dataclass
-class Session:
-    scene: P.Scene                                   # ảnh làm việc + người phát hiện được
-    cutout: Optional[P.Cutout] = None
+class Job:
+    """Một lượt chạy nền (detect / segment). Trace được ghi dần nên giao diện đọc được realtime."""
+    trace: P.Trace
+    state: str = "running"            # running | done | error
+    error: Optional[str] = None
+    status: int = 500                 # mã HTTP tương ứng khi lỗi
+    result: Optional[dict] = None
 
-    @property
-    def rgb(self) -> np.ndarray:
-        return self.scene.rgb
+
+@dataclass
+class Session:
+    rgb: np.ndarray                                  # uint8 ảnh làm việc
+    scene: Optional[P.Scene] = None                  # có sau khi detect xong
+    cutout: Optional[P.Cutout] = None
+    jobs: Dict[str, Job] = field(default_factory=dict)
+    meta: dict = field(default_factory=dict)         # cài đặt lần tách nền gần nhất (cho báo cáo)
 
     @property
     def persons(self) -> List[P.Person]:
-        return self.scene.persons
+        return self.scene.persons if self.scene else []
 
 
 _sessions: "OrderedDict[str, Session]" = OrderedDict()
@@ -128,33 +138,88 @@ def options():
     return {"engines": P.available_engines(), "preprocess": P.available_preprocess()}
 
 
-@app.post("/detect", response_model=DetectOut)
-def detect(file: UploadFile = File(...),
-           preprocess: str = Query("auto", description="auto | none | danh sách bước, vd: gamma,clahe")):
+def _read_upload(file: UploadFile) -> np.ndarray:
     data = file.file.read()
     if len(data) > MAX_UPLOAD_MB * 1024 * 1024:
         raise HTTPException(413, f"Ảnh vượt quá {MAX_UPLOAD_MB} MB.")
     try:
-        rgb = P.resize_to_max_side(P.decode_image(data))
+        return P.resize_to_max_side(P.decode_image(data))
     except Exception:
         raise HTTPException(400, "Không đọc được file ảnh.")
 
-    try:
-        scene = P.detect_scene(rgb, preprocess, C.YOLO_WEIGHTS)
-    except ImportError:
-        raise HTTPException(503, "Chưa cài ultralytics (pip install ultralytics).")
-    except KeyError as e:
-        raise HTTPException(400, str(e.args[0]))
 
-    sid = uuid.uuid4().hex[:12]
-    _put(sid, Session(scene=scene))
-    h, w = rgb.shape[:2]
+def _detect_out(sid: str, scene: P.Scene) -> DetectOut:
+    h, w = scene.rgb.shape[:2]
     return DetectOut(
         session_id=sid, width=w, height=h,
         persons=[PersonOut(idx=p.idx, box=list(p.box), conf=round(p.conf, 3)) for p in scene.persons],
         quality=scene.quality, preprocess=scene.preprocess, attempt=scene.attempt,
-        suggested=P.suggest_person(scene),
+        suggested=scene.suggested,
     )
+
+
+def _run_job(job: Job, fn) -> None:
+    """Chạy fn() -> dict, gói kết quả / lỗi vào job."""
+    try:
+        job.result = fn()
+        job.state = "done"
+    except ImportError as e:
+        job.error, job.status, job.state = f"Thiếu thư viện: {e}", 503, "error"
+    except HTTPException as e:
+        job.error, job.status, job.state = str(e.detail), e.status_code, "error"
+    except KeyError as e:
+        job.error, job.status, job.state = str(e.args[0]), 400, "error"
+    except Exception as e:  # noqa: BLE001 - báo lỗi về giao diện thay vì chết thread im lặng
+        job.error, job.status, job.state = f"{type(e).__name__}: {e}", 500, "error"
+
+
+@app.post("/detect", response_model=None)
+def detect(file: UploadFile = File(...),
+           preprocess: str = Query("auto", description="auto | none | danh sách bước, vd: gamma,clahe"),
+           background: bool = Query(False, description="true = trả về ngay, theo dõi tại /session/{id}/job/detect")):
+    rgb = _read_upload(file)
+    sid = uuid.uuid4().hex[:12]
+    s = Session(rgb=rgb)
+    job = s.jobs["detect"] = Job(trace=P.Trace())
+    _put(sid, s)
+
+    def work() -> dict:
+        s.scene = P.detect_scene(rgb, preprocess, C.YOLO_WEIGHTS, trace=job.trace)
+        return _detect_out(sid, s.scene).model_dump()
+
+    if background:
+        threading.Thread(target=_run_job, args=(job, work), daemon=True).start()
+        return {"session_id": sid, "state": "running"}
+    _run_job(job, work)
+    if job.state == "error":
+        raise HTTPException(job.status, job.error)
+    return job.result
+
+
+@app.get("/session/{sid}/job/{phase}")
+def job_status(sid: str, phase: Literal["detect", "segment"], since: int = Query(0, ge=0)):
+    """Tiến độ realtime: các bước mới (từ vị trí `since`), bước đang chạy, và kết quả khi xong."""
+    s = _get(sid)
+    job = s.jobs.get(phase)
+    if job is None:
+        raise HTTPException(404, "Chưa có tác vụ này.")
+    state = job.state                       # đọc state TRƯỚC stages: 'done' thì stages đã đủ
+    return {
+        "state": state, "error": job.error, "status": job.status,
+        "running": job.trace.current if state == "running" else None,
+        "stages": job.trace.to_list(since),
+        "result": job.result if state == "done" else None,
+    }
+
+
+@app.get("/session/{sid}/trace")
+def trace(sid: str):
+    """Các bước pipeline đã chạy (kèm ảnh minh hoạ + thời gian) để vẽ sơ đồ khi demo."""
+    s = _get(sid)
+    return {
+        "detect": s.scene.trace.to_list() if s.scene else [],
+        "segment": s.cutout.trace.to_list() if s.cutout and s.cutout.trace else [],
+    }
 
 
 @app.get("/session/{sid}/preview.jpg")
@@ -176,7 +241,7 @@ def preview(sid: str):
     return Response(buf.tobytes(), media_type="image/jpeg")
 
 
-@app.post("/process/{sid}", response_model=ProcessOut)
+@app.post("/process/{sid}", response_model=None)
 def process(
     sid: str,
     person: int = Query(0, ge=0, description="Chỉ số người trong /detect"),
@@ -184,9 +249,11 @@ def process(
     band: float = Query(0.02, ge=0.005, le=0.08, description="Bề rộng vùng unknown / kích thước người"),
     box: Optional[str] = Query(None, description="x1,y1,x2,y2 - dùng khi YOLO không phát hiện được"),
     focus: float = Query(0.3, ge=0.1, le=1.0, description="Ngưỡng độ nét so với người được chọn (method=focus)"),
+    background: bool = Query(False, description="true = trả về ngay, theo dõi tại /session/{id}/job/segment"),
 ):
     s = _get(sid)
-    t0 = time.time()
+    if s.scene is None:
+        raise HTTPException(409, "Phát hiện người chưa xong.")
     if method not in P.engine_names():
         raise HTTPException(400, f"Engine '{method}' không tồn tại. Hiện có: {', '.join(P.engine_names())}")
 
@@ -208,13 +275,26 @@ def process(
             raise HTTPException(400, "Chỉ số người không hợp lệ.")
         chosen = s.persons[person]
 
-    s.cutout = P.build_cutout(s.scene, chosen, method,
-                              P.SegParams(band_frac=band, focus_frac=focus))
-    return ProcessOut(
-        session_id=sid, person=chosen.idx, method=method,
-        elapsed_s=round(time.time() - t0, 2),
-        unknown_px=int((s.cutout.trimap == 128).sum()),
-    )
+    job = s.jobs["segment"] = Job(trace=P.Trace())
+
+    def work() -> dict:
+        t0 = time.time()
+        s.cutout = P.build_cutout(s.scene, chosen, method,
+                                  P.SegParams(band_frac=band, focus_frac=focus), trace=job.trace)
+        s.meta = {"method": method, "band": band, "focus": focus, "person": chosen.idx}
+        return ProcessOut(
+            session_id=sid, person=chosen.idx, method=method,
+            elapsed_s=round(time.time() - t0, 2),
+            unknown_px=int((s.cutout.trimap == 128).sum()),
+        ).model_dump()
+
+    if background:
+        threading.Thread(target=_run_job, args=(job, work), daemon=True).start()
+        return {"session_id": sid, "state": "running"}
+    _run_job(job, work)
+    if job.state == "error":
+        raise HTTPException(job.status, job.error)
+    return job.result
 
 
 def _cut(sid: str) -> P.Cutout:
@@ -272,3 +352,18 @@ def compose(
     data, media = _encode(out, fmt, 95)
     return Response(data, media_type=media,
                     headers={"Content-Disposition": f'attachment; filename="result.{ "jpg" if fmt=="jpeg" else "png"}"'})
+
+
+@app.get("/session/{sid}/report.pdf")
+def report(sid: str, intensity: float = Query(1.0, ge=0.0, le=1.0)):
+    """Báo cáo PDF: thông tin ảnh, cài đặt, hai pipeline với ảnh từng bước, kết quả trước / sau."""
+    s = _get(sid)
+    if s.scene is None:
+        raise HTTPException(409, "Phát hiện người chưa xong.")
+    labels = {e["name"]: e["label"] for e in P.available_engines()}
+    try:
+        data = build_report(s.rgb, s.scene, s.cutout, s.meta, intensity, labels)
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
+    return Response(data, media_type="application/pdf",
+                    headers={"Content-Disposition": 'attachment; filename="report.pdf"'})

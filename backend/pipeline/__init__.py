@@ -19,10 +19,11 @@ from .preprocess import available as available_preprocess
 from .segment import available as available_engines
 from .segment import ENGINES, build_cutout
 from .select import suggest_person
-from .types import Cutout, Person, Scene, SegParams
+from .schema import Cutout, Person, Scene, SegParams
+from .trace import Trace
 
 __all__ = [
-    "Cutout", "Person", "Scene", "SegParams",
+    "Cutout", "Person", "Scene", "SegParams", "Trace",
     "decode_image", "resize_to_max_side", "detect_scene", "build_cutout",
     "compose", "alpha_to_png", "available_engines", "available_preprocess", "engine_names", "suggest_person",
 ]

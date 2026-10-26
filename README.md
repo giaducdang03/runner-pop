@@ -48,7 +48,7 @@ sao cho `ảnh ≈ α·F + (1−α)·B` → viền không lẫn màu nền cũ, 
 
 ## API
 
-`GET /options` (engine + bước tiền xử lý hiện có) · `POST /detect?preprocess=auto|none|gamma,clahe` · `GET /session/{id}/preview.jpg` · `POST /process/{id}?person=&method=cf|knn&band=&box=x1,y1,x2,y2`
+`GET /session/{id}/trace` (các bước pipeline + ảnh minh hoạ) · `GET /options` (engine + bước tiền xử lý hiện có) · `POST /detect?preprocess=auto|none|gamma,clahe` · `GET /session/{id}/preview.jpg` · `POST /process/{id}?person=&method=cf|knn&band=&box=x1,y1,x2,y2`
 · `GET /session/{id}/{original.jpg|foreground.png|background.jpg|alpha.png|trimap.png}` · `GET /session/{id}/compose?intensity=&fmt=`
 · `GET /health`. Session lưu trong RAM (tối đa 8), phù hợp 1 người dùng/demo.
 
@@ -59,7 +59,8 @@ backend/
   main.py                  API + session
   pipeline/
     config.py              ngưỡng / hằng số (chất lượng ảnh, thang thử lại detect, model)
-    types.py               Person, Scene, SegParams, Cutout
+    schema.py              Person, Scene, SegParams, Cutout
+    trace.py               ghi từng bước + ảnh trung gian -> giao diện vẽ sơ đồ pipeline khi demo
     registry.py            Registry dùng chung cho các bước cắm thêm
     imageio.py             đọc ảnh, resize
     preprocess/            tiền xử lý CHỈ cho phát hiện
@@ -69,12 +70,15 @@ backend/
     segment/               engine tách nền -> Cutout
       base.py              ENGINES registry + helper
       grabcut.py / focus.py / birefnet.py
+    occlusion.py           loại phần của người khác (thứ tự trước/sau theo vị trí chân)
     matting.py, masks.py   khối dùng chung (trimap, matting, khử nhiễm màu, phép toán mask)
     compose.py             ghép đen trắng
 ```
 
 - **Thêm bước tiền xử lý**: viết hàm `rgb -> rgb` với `@STEPS.register("ten", label=...)` trong `preprocess/steps.py`;
   muốn tự động dùng thì thêm quy tắc vào `plan_steps()`. Giao diện tự hiện bước mới (lấy từ `/options`).
+- **Hiện bước trên sơ đồ demo**: bọc đoạn code bằng `with trace.stage("key", "Nhãn") as s:` rồi `s.show(img)` / `s.overlay(rgb, mask)`;
+  giao diện tự vẽ thành thẻ trong sơ đồ.
 - **Thêm engine tách nền**: file mới trong `segment/` với `@ENGINES.register("ten", label=...)`,
   chữ ký `(scene, person, params) -> Cutout`, rồi import nó trong `segment/__init__.py`.
 - **Khi không phát hiện được người** (`preprocess=auto`): `detect.py` thử lại theo `DETECT_ATTEMPTS`

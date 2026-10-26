@@ -8,7 +8,10 @@ import numpy as np
 
 from . import config as C
 from . import preprocess as PP
-from .types import Person, Scene
+from .masks import box_to_mask
+from .schema import Person, Scene
+from .select import suggest_person
+from .trace import Trace
 
 _yolo_model = None
 
@@ -53,24 +56,71 @@ def detect_persons(det_rgb: np.ndarray, weights: str = C.YOLO_WEIGHTS,
     return persons
 
 
+def _draw_boxes(rgb: np.ndarray, persons: List[Person]) -> np.ndarray:
+    vis = rgb.copy()
+    th = max(2, vis.shape[1] // 400)
+    for p in persons:
+        x1, y1, x2, y2 = p.box
+        cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 255, 0), th)
+        cv2.putText(vis, f"#{p.idx}", (x1 + 4, max(18, y1 + 22)), cv2.FONT_HERSHEY_SIMPLEX,
+                    max(0.6, vis.shape[1] / 1600), (0, 255, 0), th, cv2.LINE_AA)
+    return vis
+
+
+def _run_chain_traced(trace: Trace, rgb: np.ndarray, names: List[str], prefix: str = "") -> np.ndarray:
+    out = rgb
+    for n in names:
+        with trace.stage(f"pre_{n}", f"{prefix}{PP.STEPS.label(n)}", note=n) as s:
+            out = PP.STEPS.get(n)(out)
+            s.show(out)
+    return out
+
+
 def detect_scene(rgb: np.ndarray, preprocess: str = "auto",
-                 weights: str = C.YOLO_WEIGHTS) -> Scene:
+                 weights: str = C.YOLO_WEIGHTS, trace: Optional[Trace] = None) -> Scene:
     """
     Tiền xử lý (theo `preprocess`) -> YOLO. Nếu không thấy ai: thử lại với conf thấp hơn,
     imgsz lớn hơn và (khi preprocess="auto") chuỗi tiền xử lý mạnh hơn.
+    Mọi bước được ghi vào `trace` (truyền vào để theo dõi realtime) và scene.trace.
     """
-    names, det_img, quality = PP.prepare(rgb, preprocess)
+    trace = trace if trace is not None else Trace()
+    h, w = rgb.shape[:2]
+    with trace.stage("load", "Ảnh đầu vào (đã resize)", note=f"{w}×{h}px") as s:
+        s.show(rgb)
+
+    with trace.stage("quality", "Đánh giá chất lượng ảnh") as s:
+        quality = PP.assess(rgb)
+        qd = quality.to_dict()
+        s.note = ("vấn đề: " + ", ".join(qd["flags"])) if qd["flags"] else "ảnh tốt"
+        s.note += (f" · sáng {qd['brightness']:.0f}, tương phản {qd['contrast']:.0f}, "
+                   f"nét {qd['sharpness']:.0f}, nhiễu {qd['noise']:.1f}")
+    names = PP.parse_spec(preprocess, quality)
     auto = (preprocess or "auto").strip().lower() == "auto"
+    det_img = _run_chain_traced(trace, rgb, names)
+    if not names:
+        with trace.stage("pre_none", "Không tiền xử lý", note="ảnh đưa thẳng vào YOLO"):
+            pass
 
     persons: List[Person] = []
     attempt = 0
     for attempt, (conf, imgsz) in enumerate(C.DETECT_ATTEMPTS):
         if attempt > 0 and auto:
-            names = [n for n in C.FALLBACK_PREPROCESS]
-            det_img = PP.run_chain(rgb, names)
-        persons = detect_persons(det_img, weights, conf=conf, imgsz=imgsz)
+            names = list(C.FALLBACK_PREPROCESS)
+            det_img = _run_chain_traced(trace, rgb, names, prefix=f"Thử lại {attempt}: ")
+        label = "YOLO-seg phát hiện người" + (f" (thử lại {attempt})" if attempt else "")
+        with trace.stage("yolo", label, note=f"conf ≥ {conf}, imgsz {imgsz}") as s:
+            persons = detect_persons(det_img, weights, conf=conf, imgsz=imgsz)
+            s.note += f" → {len(persons)} người"
+            s.show(_draw_boxes(det_img, persons))
         if persons:
             break
 
+    suggested = suggest_person(Scene(rgb=rgb, persons=persons)) if persons else 0
+    if persons:
+        with trace.stage("select", "Tự chọn người chạy chính",
+                         note=f"#{suggested}: to + gần tâm + nét + conf cao") as s:
+            s.overlay(rgb, persons[suggested].mask if persons[suggested].mask is not None
+                      else box_to_mask(persons[suggested].box, rgb.shape))
+
     return Scene(rgb=rgb, persons=persons, det_rgb=det_img, quality=quality.to_dict(),
-                 preprocess=names, attempt=attempt)
+                 preprocess=names, attempt=attempt, suggested=suggested, trace=trace)

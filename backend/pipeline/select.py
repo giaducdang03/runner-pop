@@ -4,7 +4,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from .types import Person, Scene
+from .schema import Person, Scene
 
 
 def _sharpness(gray_lap: np.ndarray, p: Person) -> float:

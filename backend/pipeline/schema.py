@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from .trace import Trace
+
 
 @dataclass
 class Person:
@@ -29,6 +31,8 @@ class Scene:
     quality: Dict[str, Any] = field(default_factory=dict)
     preprocess: List[str] = field(default_factory=list)  # các bước tiền xử lý đã áp dụng
     attempt: int = 0                                     # lần thử detect thành công (0 = lần đầu)
+    suggested: int = 0                                   # người được tự chọn (chế độ auto)
+    trace: Trace = field(default_factory=Trace, repr=False)  # các bước đã chạy, để demo
 
     def others(self, person: Person) -> List[Person]:
         return [p for p in self.persons if p is not person]
@@ -39,6 +43,7 @@ class SegParams:
     """Tham số người dùng chỉnh được cho giai đoạn tách nền."""
     band_frac: float = 0.02      # bề rộng vùng unknown / kích thước người
     focus_frac: float = 0.3      # ngưỡng độ nét (engine "focus")
+    trace: Trace = field(default_factory=Trace, repr=False)   # engine ghi các bước vào đây
 
 
 @dataclass
@@ -49,3 +54,4 @@ class Cutout:
     foreground: np.ndarray   # float32 HxWx3, RGB, 0..1  (đã khử nhiễm màu viền)
     background: np.ndarray   # float32 HxWx3, RGB, 0..1  (nền thật ước lượng, không lẫn màu người)
     trimap: np.ndarray       # uint8 HxW (0 / 128 / 255) - để debug
+    trace: Optional[Trace] = field(default=None, repr=False)

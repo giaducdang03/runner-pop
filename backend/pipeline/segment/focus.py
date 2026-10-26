@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 
 from ..masks import fill_small_holes, mask_bbox
-from ..types import Cutout, Person, Scene, SegParams
+from ..schema import Cutout, Person, Scene, SegParams
 from .base import ENGINES, person_init_mask
 from .grabcut import cutout_from_mask, refine_mask_grabcut
 
@@ -82,7 +82,18 @@ def focus_mask(rgb: np.ndarray, person: Person, init: np.ndarray,
 
 @ENGINES.register("focus", label="Mặt phẳng nét (ảnh xoá phông: giữ màu người nét)")
 def run(scene: Scene, person: Person, params: SegParams) -> Cutout:
+    t = params.trace
     init = person_init_mask(scene, person)
-    fm = focus_mask(scene.rgb, person, init, params.focus_frac, scene.others(person))
-    mask = refine_mask_grabcut(scene.rgb, fm, mask_bbox(fm))
-    return cutout_from_mask(scene.rgb, mask, params.band_frac, "cf")
+    with t.stage("init_mask", "Mask ban đầu từ YOLO-seg") as s:
+        s.overlay(scene.rgb, init)
+    with t.stage("focus_map", "Bản đồ độ nét (đỏ = nét, xanh = mờ/bokeh)",
+                 note="Laplacian mịn + tỉ lệ mịn/thô") as s:
+        s.show(focus_energy(scene.rgb)[0], heat=True)
+    with t.stage("focus_mask", "Mặt phẳng nét: người nét ngang người được chọn",
+                 note=f"ngưỡng {params.focus_frac:.0%} độ nét của người được chọn") as s:
+        fm = focus_mask(scene.rgb, person, init, params.focus_frac, scene.others(person))
+        s.overlay(scene.rgb, fm)
+    with t.stage("grabcut", "GrabCut tinh chỉnh biên", note="khởi tạo từ mặt phẳng nét") as s:
+        mask = refine_mask_grabcut(scene.rgb, fm, mask_bbox(fm))
+        s.overlay(scene.rgb, mask)
+    return cutout_from_mask(scene.rgb, mask, params, "cf")

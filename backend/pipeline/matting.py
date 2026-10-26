@@ -1,10 +1,13 @@
 """Trimap -> alpha matting -> khử nhiễm màu viền (pymatting, CPU)."""
 from __future__ import annotations
 
+from typing import Optional
+
 import cv2
 import numpy as np
 
-from .types import Cutout
+from .schema import Cutout
+from .trace import Trace
 
 
 def make_trimap(mask: np.ndarray, band_frac: float = 0.02) -> np.ndarray:
@@ -91,7 +94,12 @@ def decontaminate(rgb_f: np.ndarray, alpha: np.ndarray):
     return fg, bg
 
 
-def finish_cutout(rgb_f: np.ndarray, alpha: np.ndarray, trimap: np.ndarray) -> Cutout:
+def finish_cutout(rgb_f: np.ndarray, alpha: np.ndarray, trimap: np.ndarray,
+                  trace: Optional[Trace] = None) -> Cutout:
     """Bước cuối chung của mọi engine: khử nhiễm màu + đóng gói."""
-    fg, bg = decontaminate(rgb_f, alpha)
+    with (trace or Trace()).stage("decontaminate", "Khử nhiễm màu viền (ước lượng F / B)",
+                                  note="ảnh ≈ α·F + (1−α)·B") as s:
+        fg, bg = decontaminate(rgb_f, alpha)
+        a = alpha[..., None]
+        s.show(a * fg + (1 - a) * 0.5)          # người tách khỏi nền, đặt trên nền xám
     return Cutout(image=rgb_f, alpha=alpha, foreground=fg, background=bg, trimap=trimap)

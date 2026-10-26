@@ -34,6 +34,9 @@ class Registry:
         except KeyError:
             raise KeyError(f"Không có {self.kind} '{name}'. Hiện có: {', '.join(self._fns)}") from None
 
+    def label(self, name: str) -> str:
+        return self._labels.get(name, name)
+
     def __contains__(self, name: str) -> bool:
         return name in self._fns
 

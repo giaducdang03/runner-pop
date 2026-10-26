@@ -8,7 +8,10 @@ Luồng:
      (canvas JS, không gọi lại backend). Ảnh tải về dùng /compose của backend.
 """
 import base64
+import json
 import os
+import time
+from html import escape
 
 import requests
 import streamlit as st
@@ -16,8 +19,9 @@ import streamlit.components.v1 as components
 
 API = os.environ.get("API_URL", "http://127.0.0.1:8000")
 
-st.set_page_config(page_title="Runner – nền đen trắng", layout="wide")
-st.title("Giữ màu người chạy – nền đen trắng")
+st.set_page_config(page_title="Color Pop Runner", page_icon="🏃", layout="wide")
+st.title("🏃 Color Pop Runner")
+st.caption("Giữ màu người chạy, đưa nền về đen trắng · YOLO-seg → tách nền → matting → ghép (chạy hoàn toàn trên CPU)")
 
 
 def api_get(path, **kw):
@@ -46,6 +50,126 @@ OPTS = load_options()
 ENGINE_LABELS = {e["name"]: e["label"] for e in OPTS["engines"]}
 PRE_LABELS = {p["name"]: p["label"] for p in OPTS["preprocess"]}
 ENGINE_DEFAULT = "birefnet" if "birefnet" in ENGINE_LABELS else next(iter(ENGINE_LABELS))
+
+PIPELINE_TMPL = """
+<style>
+  :root { color-scheme: light dark; }
+  body { margin:0; font-family: system-ui, sans-serif; }
+  #row { display:flex; gap:8px; overflow-x:auto; padding:4px 2px 12px; }
+  .card { flex:0 0 220px; border:1px solid rgba(128,128,128,.35); border-radius:10px; padding:8px; box-sizing:border-box; }
+  .card .n { font-size:11px; opacity:.65; }
+  .card .t { font-weight:600; font-size:13px; margin:2px 0 6px; min-height:34px; }
+  .card img { width:100%; border-radius:6px; display:block; cursor:zoom-in; transition:transform .15s; }
+  .card img:hover { transform:scale(1.02); }
+  .card .none { height:70px; border-radius:6px; background:rgba(128,128,128,.12); display:flex;
+                align-items:center; justify-content:center; font-size:11px; opacity:.6; }
+  .card .d { font-size:11px; opacity:.75; margin-top:6px; line-height:1.3; }
+  .arrow { flex:0 0 auto; align-self:center; font-size:22px; opacity:.5; }
+</style>
+<div id="row"></div>
+<script>
+const stages = __DATA__;
+const row = document.getElementById('row');
+// Modal gắn vào trang cha (iframe của Streamlit cùng origin) để phủ toàn màn hình; không được thì dùng iframe.
+let P = window;
+try { void window.parent.document.body; P = window.parent; } catch (e) {}
+const D = P.document;
+let idx = 0;
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+stages.forEach((s, i) => {
+  if (i) { const a = document.createElement('div'); a.className = 'arrow'; a.textContent = '➜'; row.appendChild(a); }
+  const c = document.createElement('div'); c.className = 'card';
+  c.innerHTML = `<div class="n">BƯỚC ${i+1} · ${s.seconds.toFixed(2)}s</div><div class="t">${esc(s.label)}</div>`
+    + (s.image ? `<img src="${s.image}" title="Bấm để phóng to">` : `<div class="none">không có ảnh</div>`)
+    + `<div class="d">${s.note ? esc(s.note) : '&nbsp;'}</div>`;
+  const img = c.querySelector('img'); if (img) img.addEventListener('click', () => openModal(i));
+  row.appendChild(c);
+});
+
+function closeModal() {
+  const o = D.getElementById('pl-modal'); if (o) o.remove();
+  if (P.__plKey) { D.removeEventListener('keydown', P.__plKey); P.__plKey = null; }
+}
+function step(d) {
+  let j = idx; do { j = (j + d + stages.length) % stages.length; } while (!stages[j].image && j !== idx);
+  openModal(j);
+}
+function openModal(i) {
+  closeModal(); idx = i;
+  const s = stages[i];
+  const o = D.createElement('div'); o.id = 'pl-modal';
+  o.style.cssText = 'position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,.88);display:flex;flex-direction:column;'
+    + 'align-items:center;justify-content:center;gap:12px;font-family:system-ui,sans-serif;color:#fff;cursor:zoom-out';
+  o.innerHTML = `<div style="font-size:14px;opacity:.8">BƯỚC ${i+1}/${stages.length} · ${s.seconds.toFixed(2)}s</div>`
+    + `<div style="font-size:18px;font-weight:600;text-align:center;padding:0 60px">${esc(s.label)}</div>`
+    + `<img src="${s.image}" style="max-width:92vw;max-height:76vh;border-radius:8px;box-shadow:0 8px 40px #000a;background:#222">`
+    + `<div style="font-size:13px;opacity:.75;max-width:80vw;text-align:center">${esc(s.note || '')}</div>`
+    + `<div style="font-size:12px;opacity:.55">← → chuyển bước · Esc hoặc bấm để đóng</div>`;
+  const nav = (txt, side, d) => { const b = D.createElement('div'); b.textContent = txt;
+    b.style.cssText = `position:absolute;top:50%;${side}:18px;font-size:38px;padding:8px 14px;cursor:pointer;user-select:none;opacity:.7`;
+    b.addEventListener('click', e => { e.stopPropagation(); step(d); }); return b; };
+  o.appendChild(nav('‹', 'left', -1)); o.appendChild(nav('›', 'right', 1));
+  o.addEventListener('click', closeModal);
+  D.body.appendChild(o);
+  P.__plKey = e => { if (e.key === 'Escape') closeModal(); else if (e.key === 'ArrowRight') step(1); else if (e.key === 'ArrowLeft') step(-1); };
+  D.addEventListener('keydown', P.__plKey);
+}
+</script>
+"""
+
+
+def render_pipeline(title: str, stages: list) -> None:
+    """Vẽ các bước đã chạy thành sơ đồ pipeline nằm ngang; bấm vào ảnh để phóng to (modal, ←/→ đổi bước)."""
+    if not stages:
+        return
+    total = sum(s["seconds"] for s in stages)
+    st.markdown(f"**{title}** · {len(stages)} bước · {total:.1f}s")
+    data = json.dumps(stages).replace("</", "<\\/")
+    components.html(PIPELINE_TMPL.replace("__DATA__", data), height=440, scrolling=False)
+
+
+def live_cards_html(title: str, stages: list, running: str = None, state: str = "running") -> str:
+    """Sơ đồ tĩnh (không JS) cho lúc đang chạy: các bước đã xong + thẻ 'đang chạy'. Xong rồi mới chuyển sang bản zoom được."""
+    card = ("flex:0 0 200px;border:1px solid rgba(128,128,128,.35);border-radius:10px;"
+            "padding:8px;box-sizing:border-box")
+    cards = []
+    for i, s in enumerate(stages, 1):
+        img = (f'<img src="{s["image"]}" style="width:100%;border-radius:6px;display:block"/>' if s["image"]
+               else '<div style="height:60px;border-radius:6px;background:rgba(128,128,128,.12)"></div>')
+        cards.append(
+            f'<div style="{card}"><div style="font-size:11px;opacity:.65">BƯỚC {i} · {s["seconds"]:.2f}s ✓</div>'
+            f'<div style="font-weight:600;font-size:13px;margin:2px 0 6px;min-height:34px">{escape(s["label"])}</div>'
+            f'{img}<div style="font-size:11px;opacity:.75;margin-top:6px">{escape(s["note"]) or "&nbsp;"}</div></div>')
+    if running and state == "running":
+        cards.append(
+            f'<div style="{card};border:2px dashed #f5a623">'
+            f'<div style="font-size:11px;color:#f5a623">BƯỚC {len(stages) + 1} · ĐANG CHẠY…</div>'
+            f'<div style="font-weight:600;font-size:13px;margin:2px 0 6px;min-height:34px">{escape(running)}</div>'
+            '<div style="height:110px;border-radius:6px;background:rgba(245,166,35,.12);display:flex;'
+            'align-items:center;justify-content:center;font-size:30px">⏳</div></div>')
+    arrow = '<div style="flex:0 0 auto;align-self:center;font-size:22px;opacity:.5">➜</div>'
+    head = f"<b>{escape(title)}</b> · {len(stages)} bước · {sum(s['seconds'] for s in stages):.1f}s"
+    return (f'<div style="margin-bottom:4px">{head}</div>'
+            '<div style="display:flex;gap:8px;overflow-x:auto;padding:4px 2px 12px">' + arrow.join(cards) + "</div>")
+
+
+def follow_job(slot, sid: str, phase: str, title: str):
+    """Theo dõi job nền, vẽ pipeline realtime trong `slot`. Trả về (job_status, danh_sách_stage)."""
+    stages: list = []
+    with slot:
+        ph = st.empty()
+    while True:
+        r = api_get(f"/session/{sid}/job/{phase}", params={"since": len(stages)}).json()
+        stages += r["stages"]
+        ph.html(live_cards_html(title, stages, r["running"], r["state"]))
+        if r["state"] != "running":
+            break
+        time.sleep(0.25)
+    ph.empty()
+    return r, stages
+
 
 # ---------------------------------------------------------------- sidebar
 with st.sidebar:
@@ -87,13 +211,18 @@ file_key = f"{up.name}-{up.size}-{pre_spec}"
 if st.session_state.get("file_key") != file_key:
     st.session_state.clear()
     st.session_state["file_key"] = file_key
-    with st.spinner("YOLO đang phát hiện người..."):
-        r = requests.post(f"{API}/detect", params={"preprocess": pre_spec},
-                          files={"file": (up.name, up.getvalue(), up.type)}, timeout=300)
+    r = requests.post(f"{API}/detect", params={"preprocess": pre_spec, "background": "true"},
+                      files={"file": (up.name, up.getvalue(), up.type)}, timeout=300)
     if r.status_code != 200:
         st.error(err_msg(r))
         st.stop()
-    st.session_state["det"] = r.json()
+    job, stages = follow_job(st.container(), r.json()["session_id"], "detect",
+                             "Pipeline 1 · Tiền xử lý & phát hiện người (đang chạy)")
+    if job["state"] == "error":
+        st.error(job["error"])
+        st.stop()
+    st.session_state["det"] = job["result"]
+    st.session_state["trace"] = {"detect": stages, "segment": []}
 
 det = st.session_state["det"]
 sid = det["session_id"]
@@ -106,6 +235,8 @@ if q:
     retry = f" · phát hiện sau {det['attempt']} lần thử lại" if det.get("attempt") else ""
     st.caption(f"Chất lượng ảnh: {flags} (sáng {q['brightness']:.0f}, tương phản {q['contrast']:.0f}, "
                f"nét {q['sharpness']:.0f}, nhiễu {q['noise']:.1f}) · tiền xử lý: {steps}{retry}")
+
+render_pipeline("Pipeline 1 · Tiền xử lý & phát hiện người", st.session_state["trace"]["detect"])
 
 # ---------------------------------------------------------------- chọn người
 c1, c2 = st.columns([3, 2])
@@ -144,13 +275,20 @@ if go or auto_run:
     params = {"person": choice, "method": method, "band": band, "focus": focus}
     if manual_box:
         params["box"] = manual_box
-    with st.spinner("Đang tách người và matting (CPU, có thể mất 10–40 giây)..."):
-        r = requests.post(f"{API}/process/{sid}", params=params, timeout=900)
+    r = requests.post(f"{API}/process/{sid}", params={**params, "background": "true"}, timeout=60)
+    job = None
     if r.status_code != 200:
         st.error(err_msg(r))
     else:
-        info = r.json()
+        job, stages = follow_job(st.container(), sid, "segment",
+                                 f"Pipeline 2 · Tách nền ({ENGINE_LABELS.get(method, method)}) (đang chạy)")
+        if job["state"] == "error":
+            st.error(job["error"])
+            job = None
+    if job is not None:
+        info = job["result"]
         st.session_state["done"] = info
+        st.session_state["trace"]["segment"] = stages
         st.session_state["assets"] = {
             "orig": base64.b64encode(api_get(f"/session/{sid}/original.jpg").content).decode(),
             "fg": base64.b64encode(api_get(f"/session/{sid}/foreground.png").content).decode(),
@@ -164,6 +302,8 @@ if "assets" not in st.session_state:
 # ---------------------------------------------------------------- viewer
 info = st.session_state["done"]
 a = st.session_state["assets"]
+render_pipeline(f"Pipeline 2 · Tách nền ({ENGINE_LABELS.get(info['method'], info['method'])})",
+                st.session_state["trace"]["segment"])
 st.success(f"Xong trong {info['elapsed_s']} s.")
 
 VIEWER = """
@@ -273,6 +413,17 @@ with d1:
     st.download_button("Tải ảnh kết quả", img, file_name=f"result.{'jpg' if fmt == 'jpeg' else 'png'}",
                        mime=f"image/{fmt}", use_container_width=True)
 with d2:
+    st.markdown("**Báo cáo PDF**")
+    if st.button("Tạo báo cáo PDF (toàn bộ thông tin + pipeline)", use_container_width=True):
+        with st.spinner("Đang tạo PDF..."):
+            rr = requests.get(f"{API}/session/{sid}/report.pdf", params={"intensity": dl_int}, timeout=120)
+        if rr.status_code == 200:
+            st.session_state["pdf"] = rr.content
+        else:
+            st.error(err_msg(rr))
+    if st.session_state.get("pdf"):
+        st.download_button("Tải báo cáo PDF", st.session_state["pdf"], file_name="color_pop_runner_report.pdf",
+                           mime="application/pdf", use_container_width=True)
     with st.expander("Debug: alpha & trimap"):
         st.image(f"{API}/session/{sid}/alpha.png", caption="Alpha matte", use_container_width=True)
         st.image(f"{API}/session/{sid}/trimap.png", caption="Trimap (xám = vùng unknown)", use_container_width=True)
