@@ -24,3 +24,11 @@ Q_BLURRY = 60.0                # phương sai Laplacian (ảnh 640px) dưới m�
 # --- backend model --------------------------------------------------------
 YOLO_WEIGHTS = os.environ.get("YOLO_WEIGHTS", "yolov8s-seg.pt")
 BIREFNET_MODEL = os.environ.get("BIREFNET_MODEL", "birefnet-general-lite")
+
+# --- ROI / độ phân giải làm việc -----------------------------------------
+ROI_MARGIN = 0.12          # ROI nở thêm tỉ lệ này * cạnh dài của box người mỗi phía
+ROI_MIN_PX = 16            # sàn nở tối thiểu (px) mỗi phía, cho người rất nhỏ
+WORK_MAX_SIDE = 640        # cạnh dài tối đa của ROI khi chạy engine (scale < 1 nếu lớn hơn)
+GUIDED_RADIUS = 8          # bán kính guided filter (px, ở độ phân giải làm việc)
+GUIDED_EPS = 1e-4          # eps của guided filter
+FULLRES = os.environ.get("FULLRES", "0") == "1"   # bật = bỏ ROI, chạy toàn ảnh gốc
