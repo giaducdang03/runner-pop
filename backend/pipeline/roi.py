@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import TYPE_CHECKING, Optional, Tuple
 
 import cv2
 import numpy as np
 
 from . import config as C
 from .schema import Person, Scene
+
+if TYPE_CHECKING:
+    from .trace import Trace
 
 
 @dataclass(frozen=True)
@@ -159,3 +162,17 @@ def upsample_rgb(rgb_work: np.ndarray, roi: Roi, guide_rgb_f: np.ndarray,
     out = base.astype(np.float32).copy()
     out[roi.y1:roi.y2, roi.x1:roi.x2] = up
     return out
+
+
+def roi_stage(trace: "Trace", scene_rgb: np.ndarray, roi: Roi) -> None:
+    """Mở stage `roi` của trace tách nền: ảnh gốc có vẽ khung ROI + ghi toạ độ, % ảnh, kích thước
+    làm việc (FR-96). Mọi họ engine gọi ngay sau `init_mask`, kể cả khi kết quả lấy từ cache."""
+    h, w = scene_rgb.shape[:2]
+    pct = (roi.x2 - roi.x1) * (roi.y2 - roi.y1) / max(1, h * w)
+    ww, wh = roi.work_size
+    note = f"ROI {roi.x1},{roi.y1}-{roi.x2},{roi.y2} ({pct:.0%} ảnh) · làm việc {ww}×{wh}px"
+    with trace.stage("roi", "Vùng xử lý (ROI) và độ phân giải làm việc", note=note) as s:
+        vis = np.ascontiguousarray(scene_rgb).copy()
+        cv2.rectangle(vis, (roi.x1, roi.y1), (max(roi.x1, roi.x2 - 1), max(roi.y1, roi.y2 - 1)),
+                      (255, 200, 0), max(2, max(h, w) // 300))
+        s.show(vis)

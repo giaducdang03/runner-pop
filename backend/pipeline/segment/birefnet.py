@@ -6,7 +6,7 @@ import numpy as np
 from .. import config as C
 from ..matting import finish_cutout
 from ..occlusion import exclusion_mask
-from ..roi import active_roi
+from ..roi import active_roi, roi_stage
 from ..schema import Cutout, Person, Scene, SegParams
 from .base import ENGINES, person_init_mask, to_float, work_scene
 from .gate import gate_to_person
@@ -40,6 +40,7 @@ def run(scene: Scene, person: Person, params: SegParams) -> Cutout:
     with t.stage("init_mask", "Mask ban đầu từ YOLO-seg",
                  note=f"ROI {w}×{h} (scale {roi.scale:.2f})") as s:
         s.overlay(scene_w.rgb, init)
+    roi_stage(t, scene.rgb, roi)
     with t.stage("birefnet", "BiRefNet: alpha trên ROI",
                  note=f"{C.BIREFNET_MODEL}, ROI {w}×{h} (scale {roi.scale:.2f})") as s:
         alpha_raw = params.cached(("birefnet", person.idx, person.box),

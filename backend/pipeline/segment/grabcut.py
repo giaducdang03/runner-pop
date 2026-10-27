@@ -9,7 +9,7 @@ import numpy as np
 from ..masks import fill_small_holes, keep_components_overlapping
 from ..matting import finish_cutout, make_trimap, matte
 from ..occlusion import exclusion_mask
-from ..roi import Roi, active_roi
+from ..roi import Roi, active_roi, roi_stage
 from ..schema import Cutout, Person, Scene, SegParams
 from .base import ENGINES, person_init_mask, to_float, work_scene
 
@@ -111,6 +111,7 @@ def _make_engine(method: str):
             with t.stage("init_mask", "Mask ban đầu từ YOLO-seg",
                          note=f"ROI {w}×{h} (scale {roi.scale:.2f})") as s:
                 s.overlay(scene_w.rgb, init)
+            roi_stage(t, scene.rgb, roi)
             with t.stage("occlusion", "Loại phần của người khác (thứ tự trước/sau theo vị trí chân)",
                          note=f"{len(scene.others(person))} người khác") as s:
                 excl = exclusion_mask(scene_w, person_w, init)
@@ -122,7 +123,8 @@ def _make_engine(method: str):
 
         # mask GrabCut không phụ thuộc band_frac -> đổi band chỉ tính lại từ trimap (FR-94)
         mask_work = params.cached(("gcmask", person.idx, person.box), build_mask)
-        if not built:   # lấy từ cache: vẫn ghi một bước để sơ đồ pipeline đủ bước
+        if not built:   # lấy từ cache: vẫn ghi roi + grabcut để sơ đồ pipeline đủ bước
+            roi_stage(t, scene.rgb, roi)
             with t.stage("grabcut", "GrabCut tinh chỉnh biên", note="dùng lại mask đã tính (cache)") as s:
                 s.overlay(roi.to_work(scene.rgb), mask_work)
         return cutout_from_mask(to_float(scene.rgb), mask_work, roi, params, method)

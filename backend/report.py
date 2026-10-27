@@ -134,6 +134,14 @@ class _Report(FPDF):
             self.set_xy(self.l_margin, y0 + row_h + 3)
 
 
+def roi_note(stages) -> str:
+    """Ghi chú của stage `roi` trong trace tách nền (ROI, % ảnh, kích thước làm việc); thiếu thì "-"."""
+    for st in stages or []:
+        if st.key == "roi":
+            return st.note or "-"
+    return "-"
+
+
 def build_report(rgb: np.ndarray, scene: P.Scene, cutout: Optional[P.Cutout], meta: dict,
                  intensity: float = 1.0, engine_labels: Optional[dict] = None) -> bytes:
     pdf = _Report()
@@ -168,6 +176,7 @@ def build_report(rgb: np.ndarray, scene: P.Scene, cutout: Optional[P.Cutout], me
     if method:
         pdf.kv([
             ("Thuật toán", labels.get(method, method)),
+            ("Vùng xử lý", roi_note(cutout.trace.stages if cutout and cutout.trace else None)),
             ("Độ rộng vùng viền", f"{meta.get('band', 0):.1%} kích thước người"),
             *([("Ngưỡng độ nét", f"{meta.get('focus', 0):.0%}")] if method == "focus" else []),
             ("Cường độ nền đen trắng", f"{intensity:.0%}"),
