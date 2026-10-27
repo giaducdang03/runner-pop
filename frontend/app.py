@@ -22,8 +22,9 @@ from ui_helpers import (device_line, is_warming, pick_default_engine, prepare_me
 
 API = os.environ.get("API_URL", "http://127.0.0.1:8000")
 
-st.set_page_config(page_title="Color Pop Runner", page_icon="🏃", layout="wide")
-st.title("🏃 Color Pop Runner")
+APP_TITLE = "RunnerPop – Image Preprocessing Optimization for AI-based Runner Segmentation"
+st.set_page_config(page_title=APP_TITLE, page_icon="🏃", layout="wide")
+st.title(APP_TITLE)
 st.caption("Giữ màu người chạy, đưa nền về đen trắng · YOLO-seg → tách nền → matting → ghép (chạy hoàn toàn trên CPU)")
 
 
