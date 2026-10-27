@@ -55,10 +55,10 @@ class FakeModel:
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch, tmp_path):
     monkeypatch.setattr(C, "ACCEL_CACHE_DIR", str(tmp_path / "cache"))
-    detect._MODELS.clear()
+    detect._MODELS.clear(); detect._IR.clear(); detect._EXPORT_FAILED.clear()
     accel.release()
     yield
-    detect._MODELS.clear()
+    detect._MODELS.clear(); detect._IR.clear(); detect._EXPORT_FAILED.clear()
     accel.release()
 
 
@@ -96,15 +96,53 @@ def test_detect_falls_back_to_cpu_when_gpu_predict_raises(monkeypatch):
     persons = detect.detect_persons(IMG, "x.pt", device=device_for("cuda"))
     assert len(persons) == 1
     used_device = calls[-1][1]["device"]
-    assert used_device == "cpu" and calls[-1][1]["half"] is False
+    assert used_device == "cpu" and "half" not in calls[-1][1]
+
+
+def test_cpu_predict_has_no_half_key(monkeypatch):
+    calls = []
+    monkeypatch.setattr(detect, "get_yolo", lambda w=None, device=None: FakeModel("c", calls=calls))
+    detect.detect_persons(IMG, "x.pt", device=device_for("cpu"))
+    assert "half" not in calls[0][1] and calls[0][1]["device"] == "cpu"
 
 
 def test_openvino_falls_back_to_pt_when_export_fails(monkeypatch):
-    loaded = []
-    monkeypatch.setattr(detect, "_load_yolo", lambda path, **kw: (loaded.append(str(path)), FakeModel("m"))[1])
+    calls, loaded = [], []
+    monkeypatch.setattr(detect, "_load_yolo",
+                        lambda path, **kw: (loaded.append(str(path)), FakeModel("m", calls=calls))[1])
     monkeypatch.setattr(detect, "export_openvino", lambda weights=C.YOLO_WEIGHTS: None)
-    persons = detect.detect_persons(IMG, "yolo_test.pt", device=device_for("openvino"))
-    assert len(persons) == 1 and loaded[-1].endswith(".pt")
+    t = Trace()
+    with t.stage("yolo", "y") as s:
+        persons, dev = detect._detect_with_device(IMG, "yolo_test.pt", 0.25, 640,
+                                                  device_for("openvino"), stage=s)
+    assert len(persons) == 1 and loaded == ["yolo_test.pt"]
+    assert len(calls) == 1 and calls[0][1]["device"] == "cpu" and "half" not in calls[0][1]
+    assert dev.kind == "cpu" and "OpenVINO IR không dùng được" in s.note and "GPU lỗi" not in s.note
+
+
+def test_export_failure_not_retried_within_window_then_retried(monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(detect, "_clock", lambda: now[0])
+    monkeypatch.setattr(C, "ACCEL_EXPORT_RETRY_S", 300.0)
+    n = []
+    monkeypatch.setattr(detect, "export_openvino", lambda weights=None: (n.append(1), None)[1])
+    assert detect._ir_for("w.pt") is None and detect._ir_for("w.pt") is None
+    assert len(n) == 1
+    now[0] += 301
+    assert detect._ir_for("w.pt") is None
+    assert len(n) == 2
+
+
+def test_export_success_after_retry_is_cached(monkeypatch, tmp_path):
+    now = [0.0]
+    monkeypatch.setattr(detect, "_clock", lambda: now[0])
+    res = [None, tmp_path]
+    n = []
+    monkeypatch.setattr(detect, "export_openvino", lambda weights=None: (n.append(1), res[len(n) - 1])[1])
+    assert detect._ir_for("w.pt") is None
+    now[0] += 1000
+    assert detect._ir_for("w.pt") == tmp_path
+    assert detect._ir_for("w.pt") == tmp_path and len(n) == 2
 
 
 def test_openvino_uses_ir_dir_when_present(monkeypatch, tmp_path):

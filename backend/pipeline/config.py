@@ -43,4 +43,5 @@ ACCEL_CACHE_DIR = os.environ.get(
     "ACCEL_CACHE_DIR", str(Path.home() / ".cache" / "color_pop_runner"))
 ACCEL_MEM_BUDGET_MB = int(os.environ.get("ACCEL_MEM_BUDGET_MB", "3072"))   # ngân sách model nạp cùng lúc
 ACCEL_UNLOAD_IDLE = float(os.environ.get("ACCEL_UNLOAD_IDLE", "0"))        # giây; 0 = không giải phóng
+ACCEL_EXPORT_RETRY_S = float(os.environ.get("ACCEL_EXPORT_RETRY_S", "300"))   # giây; xuất IR lỗi thì thử lại sau
 BIREFNET_SIZE = int(os.environ.get("BIREFNET_SIZE", "1024"))

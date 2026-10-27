@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import shutil
 import threading
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -51,15 +52,38 @@ def export_openvino(weights: str = C.YOLO_WEIGHTS) -> Optional[Path]:
         return None
 
 
+_EXPORT_LOCK = threading.Lock()         # xuất IR tuần tự; không giữ cùng lúc với _MODELS_LOCK
+_IR: Dict[str, Optional[Path]] = {}     # weights -> thư mục IR đã xuất thành công
+_EXPORT_FAILED: Dict[str, float] = {}   # weights -> thời điểm (monotonic) xuất lỗi gần nhất
+_clock = time.monotonic                 # test thay bằng đồng hồ giả
+
+
+def _ir_for(weights: str) -> Optional[Path]:
+    """IR OpenVINO của `weights`, xuất một lần. Lỗi được nhớ trong ACCEL_EXPORT_RETRY_S giây
+    (không xuất lại mỗi request), sau đó thử lại; kết quả thành công được cache."""
+    with _EXPORT_LOCK:
+        ir = _IR.get(weights)
+        if ir is not None:
+            return ir
+        failed_at = _EXPORT_FAILED.get(weights)
+        if failed_at is not None and _clock() - failed_at < C.ACCEL_EXPORT_RETRY_S:
+            return None
+        ir = export_openvino(weights)
+        if ir is None:
+            _EXPORT_FAILED[weights] = _clock()
+            return None
+        _EXPORT_FAILED.pop(weights, None)
+        _IR[weights] = ir
+        return ir
+
+
 def _build_model(weights: str, device: accel.Device):
     if device.backend == "openvino":
-        # export chạy một lần nhờ compiled (lấy GPU_LOCK trước khoá cache), kể cả kết quả None.
-        ir = accel.compiled(f"yolo-export:{weights}", lambda: export_openvino(weights), 0)
-        if ir is not None:
-            try:
-                return _load_yolo(ir, task="segment")
-            except Exception as e:  # noqa: BLE001
-                log.warning("Nạp OpenVINO IR thất bại, dùng .pt: %s", e)
+        ir = _ir_for(weights)
+        if ir is None:
+            # Không nạp .pt dưới khoá openvino: model torch không chạy được trên "intel:gpu".
+            raise RuntimeError("OpenVINO IR không dùng được")
+        return _load_yolo(ir, task="segment")
     return _load_yolo(weights)
 
 
@@ -81,12 +105,20 @@ def _detect_with_device(det_rgb: np.ndarray, weights: str, conf: float, imgsz: i
                         device: accel.Device, stage=None) -> Tuple[List[Person], accel.Device]:
     def run(dev: accel.Device) -> List[Person]:
         model = get_yolo(weights, dev)
+        kw = predict_kwargs(dev)
+        if not kw["half"]:
+            kw.pop("half")      # ultralytics cảnh báo 'half' deprecated khi truyền half=False
         res = model.predict(det_rgb, imgsz=imgsz, conf=conf, classes=[C.PERSON_CLASS],
                             verbose=False, retina_masks=True,   # mask độ phân giải gốc -> không mất tay/chân mảnh
-                            **predict_kwargs(dev))[0]
+                            **kw)[0]
         return _persons_from_result(res, det_rgb)
 
     cpu = accel.resolve("cpu")
+    if device.kind == "gpu" and device.backend == "openvino" and _ir_for(weights) is None:
+        # IR không dùng được: chạy thẳng .pt trên CPU, không thử GPU rồi mới rơi về.
+        if stage is not None:
+            stage.note = (getattr(stage, "note", "") or "") + " · OpenVINO IR không dùng được, dùng CPU"
+        return run(cpu), cpu
     return accel.with_fallback(device, lambda: run(device), lambda: run(cpu), stage=stage)
 
 
