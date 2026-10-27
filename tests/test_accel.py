@@ -200,3 +200,105 @@ def test_gpu_work_is_serialized():
     [t.start() for t in ts]
     [t.join(5) for t in ts]
     assert state["max"] == 1 and state["cur"] == 0
+
+
+# --- vòng sửa 1 ---------------------------------------------------------------
+def test_lock_order_gpu_lock_before_cache_lock_no_deadlock():
+    """A giữ GPU_LOCK rồi gọi compiled(); B gọi compiled() với build cần GPU_LOCK.
+    Thứ tự cũ (khoá cache -> GPU_LOCK) làm hai thread treo nhau."""
+    b_in_build = threading.Event()
+    done = []
+
+    def build_b():
+        b_in_build.set()
+        with accel.GPU_LOCK:
+            return "B"
+
+    def run_a():
+        def gpu_fn():
+            b_in_build.wait(0.5)             # đủ để B (thứ tự cũ) giữ khoá cache
+            return compiled("lock-a", lambda: "A", 10)
+        with_fallback(CUDA0, gpu_fn, lambda: "cpu")
+        done.append("a")
+
+    def run_b():
+        compiled("lock-b", build_b, 10)
+        with_fallback(CUDA0, lambda: "g", lambda: "cpu")
+        done.append("b")
+
+    ts = [threading.Thread(target=run_a, daemon=True), threading.Thread(target=run_b, daemon=True)]
+    ts[0].start()
+    time.sleep(0)                             # nhường A khởi động trước
+    ts[1].start()
+    [t.join(3) for t in ts]
+    assert not any(t.is_alive() for t in ts), "deadlock giữa GPU_LOCK và khoá cache"
+    assert sorted(done) == ["a", "b"]
+
+
+def test_compiled_rechecks_key_after_taking_locks():
+    builds = []
+    barrier = threading.Barrier(2)
+
+    def build():
+        builds.append(1)
+        return object()
+
+    res = []
+
+    def run():
+        barrier.wait(2)
+        res.append(compiled("same", build, 10))
+
+    ts = [threading.Thread(target=run) for _ in range(2)]
+    [t.start() for t in ts]
+    [t.join(3) for t in ts]
+    assert len(builds) == 1 and res[0] is res[1]
+
+
+class _FakeCore:
+    names = ["CPU", "GPU"]
+
+    @property
+    def available_devices(self):
+        return list(self.names)
+
+    def get_property(self, dev, prop):
+        assert prop == "FULL_DEVICE_NAME"
+        return f"name-of-{dev}"
+
+
+def _fake_ov(monkeypatch, names):
+    import sys
+    import types
+    core = type("Core", (_FakeCore,), {"names": names})
+    monkeypatch.setitem(sys.modules, "openvino", types.SimpleNamespace(Core=core))
+
+
+def test_openvino_probe_single_gpu(monkeypatch):
+    _fake_ov(monkeypatch, ["CPU", "GPU"])
+    assert accel._probe_openvino() == "name-of-GPU"
+    monkeypatch.setattr(C, "ACCEL_DEVICE_INDEX", 1)
+    assert accel._probe_openvino() is None
+
+
+def test_openvino_probe_numbered_gpus_uses_index(monkeypatch):
+    _fake_ov(monkeypatch, ["CPU", "GPU.0", "GPU.1"])
+    assert accel._probe_openvino() == "name-of-GPU.0" or accel._probe_openvino() == "name-of-GPU"
+    monkeypatch.setattr(C, "ACCEL_DEVICE_INDEX", 1)
+    assert accel._probe_openvino() == "name-of-GPU.1"
+    monkeypatch.setattr(C, "ACCEL_DEVICE_INDEX", 2)
+    assert accel._probe_openvino() is None
+
+
+def test_openvino_device_names():
+    assert OV.ov_device_name == "GPU" and OV.torch_device == "intel:gpu"
+    ov1 = Device("gpu", "openvino", "Arc", "openvino", "fp16", 1)
+    assert ov1.ov_device_name == "GPU.1" and ov1.torch_device == "intel:gpu.1"
+
+
+def test_cpu_device_is_always_fp32(monkeypatch):
+    monkeypatch.setattr(C, "ACCEL_DTYPE", "fp16")
+    assert resolve("cpu").dtype == "fp32"
+    assert resolve("gpu", "tensorrt").dtype == "fp32"
+    _, dev = with_fallback(CUDA0, lambda: 1 / 0, lambda: "x")
+    assert dev.kind == "cpu" and dev.dtype == "fp32"

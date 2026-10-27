@@ -3,6 +3,9 @@ khoá GPU, cache model có ngân sách bộ nhớ và rơi về CPU khi GPU lỗ
 
 Thêm backend mới = thêm một mục vào `BACKENDS`. Các gói tuỳ chọn (torch, openvino,
 onnxruntime) chỉ được import trong hàm; thiếu gói hay probe lỗi => backend "không có".
+
+Thứ tự khoá (tránh deadlock): LUÔN lấy GPU_LOCK trước, rồi mới tới khoá cache.
+`compiled()` tuân thủ thứ tự này; không bao giờ gọi build() khi chỉ giữ khoá cache.
 """
 from __future__ import annotations
 
@@ -37,8 +40,14 @@ class Device:
         if self.backend == "mps":
             return "mps"
         if self.backend == "openvino":
-            return "intel:gpu"
+            # Dạng có chỉ số "intel:gpu.N" chưa kiểm chứng trên phần cứng thật.
+            return "intel:gpu" if self.index == 0 else f"intel:gpu.{self.index}"
         return "cpu"
+
+    @property
+    def ov_device_name(self) -> str:
+        """Tên thiết bị để OpenVINO compile: "GPU" (chỉ số 0) hoặc "GPU.<index>"."""
+        return "GPU" if self.index == 0 else f"GPU.{self.index}"
 
     @property
     def ort_providers(self) -> list:
@@ -83,9 +92,14 @@ def _probe_openvino() -> Optional[str]:
     except ImportError:
         return None
     core = ov.Core()
-    if "GPU" not in core.available_devices:
-        return None
-    return str(core.get_property("GPU", "FULL_DEVICE_NAME"))
+    names = [n for n in core.available_devices if n == "GPU" or n.startswith("GPU.")]
+    idx = int(C.ACCEL_DEVICE_INDEX)
+    # Máy có nhiều GPU chỉ liệt kê "GPU.0", "GPU.1"...; máy một GPU có thể chỉ có "GPU".
+    candidates = ["GPU", "GPU.0"] if idx == 0 else [f"GPU.{idx}"]
+    for cand in candidates:
+        if cand in names:
+            return str(core.get_property(cand, "FULL_DEVICE_NAME"))
+    return None
 
 
 # Thứ tự khai báo = thứ tự ưu tiên của "auto".
@@ -117,7 +131,8 @@ def available_backends() -> Dict[str, str]:
 
 
 def _cpu_device() -> Device:
-    return Device("cpu", "cpu", "CPU", "torch", _dtype_for("cpu"))
+    # CPU luôn fp32: ACCEL_DTYPE chỉ áp cho backend GPU.
+    return Device("cpu", "cpu", "CPU", "torch", "fp32")
 
 
 def _dtype_for(backend: str) -> str:
@@ -172,6 +187,13 @@ def compiled(key: str, build: Callable[[], Any], nbytes: int) -> Any:
     LRU trước khi nạp; một model không vừa dù đã giải phóng hết -> MemoryError."""
     with _CACHE_LOCK:
         entry = _MODELS.get(key)
+        if entry is not None:
+            entry[2] = time.monotonic()
+            _MODELS.move_to_end(key)
+            return entry[0]
+    # Miss: thả khoá cache, lấy GPU_LOCK trước rồi mới tới khoá cache (xem docstring module).
+    with GPU_LOCK, _CACHE_LOCK:
+        entry = _MODELS.get(key)          # thread khác có thể đã nạp xong
         if entry is not None:
             entry[2] = time.monotonic()
             _MODELS.move_to_end(key)

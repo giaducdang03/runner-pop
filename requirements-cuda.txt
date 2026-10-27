@@ -1,4 +1,10 @@
 # Tuỳ chọn: chỉ cài khi dùng GPU NVIDIA (CUDA). Thiếu gói thì backend này bị coi là không có.
 # Bản CUDA của torch cài từ PyTorch index URL, không phải từ PyPI, ví dụ:
 #   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+# QUAN TRỌNG: rembg[cpu] (trong requirements.txt) kéo theo gói onnxruntime bản CPU; hai gói
+# cùng cung cấp module onnxruntime và bản CPU thường che bản GPU nên CUDAExecutionProvider
+# không xuất hiện. Gỡ bản CPU TRƯỚC khi cài bản GPU:
+#   pip uninstall -y onnxruntime
+#   pip install -r requirements-cuda.txt
+# Task B3 kiểm tra provider đang dùng; nếu thiếu CUDAExecutionProvider, trace sẽ báo đã rơi về CPU.
 onnxruntime-gpu
