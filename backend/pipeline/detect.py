@@ -1,11 +1,16 @@
 """Phát hiện người (YOLO-seg) + thang thử lại khi ảnh kém chất lượng."""
 from __future__ import annotations
 
-from typing import List, Optional
+import logging
+import shutil
+import threading
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
 
+from . import accel
 from . import config as C
 from . import preprocess as PP
 from .masks import box_to_mask
@@ -13,24 +18,87 @@ from .schema import Person, Scene
 from .select import suggest_person
 from .trace import Trace
 
-_yolo_model = None
+_MODELS: Dict[tuple, object] = {}      # (weights, backend, index) -> model
+_MODELS_LOCK = threading.Lock()         # detect có thể được gọi từ nhiều luồng job
+log = logging.getLogger(__name__)
 
 
-def get_yolo(weights: str = C.YOLO_WEIGHTS):
-    global _yolo_model
-    if _yolo_model is None:
-        from ultralytics import YOLO
-        _yolo_model = YOLO(weights)
-    return _yolo_model
+def _load_yolo(path, **kw):
+    """Nạp YOLO (import lười; test thay hàm này bằng bản giả)."""
+    from ultralytics import YOLO
+    return YOLO(str(path), **kw)
+
+
+def predict_kwargs(device: accel.Device) -> dict:
+    """Tham số thiết bị cho model.predict; MPS không bao giờ half."""
+    return {"device": device.torch_device,
+            "half": device.backend == "cuda" and device.dtype == "fp16"}
+
+
+def export_openvino(weights: str = C.YOLO_WEIGHTS) -> Optional[Path]:
+    """Xuất YOLO sang IR OpenVINO FP16 vào thư mục cache (chỉ dùng cho backend openvino).
+    Đã có thư mục thì dùng lại. Lỗi bất kỳ -> None (FR-102)."""
+    ir_dir = accel.openvino_ir_dir(weights)
+    try:
+        if ir_dir.is_dir():
+            return ir_dir
+        out = _load_yolo(weights).export(format="openvino", half=True, dynamic=False)
+        ir_dir.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(out), str(ir_dir))
+        return ir_dir
+    except Exception as e:  # noqa: BLE001
+        log.warning("Xuất OpenVINO IR thất bại, dùng .pt: %s", e)
+        return None
+
+
+def _build_model(weights: str, device: accel.Device):
+    if device.backend == "openvino":
+        # export chạy một lần nhờ compiled (lấy GPU_LOCK trước khoá cache), kể cả kết quả None.
+        ir = accel.compiled(f"yolo-export:{weights}", lambda: export_openvino(weights), 0)
+        if ir is not None:
+            try:
+                return _load_yolo(ir, task="segment")
+            except Exception as e:  # noqa: BLE001
+                log.warning("Nạp OpenVINO IR thất bại, dùng .pt: %s", e)
+    return _load_yolo(weights)
+
+
+def get_yolo(weights: str = C.YOLO_WEIGHTS, device: Optional[accel.Device] = None):
+    """Model YOLO theo backend, cache theo (weights, backend, index). CPU/cuda/mps nạp .pt;
+    openvino nạp IR (thất bại thì .pt)."""
+    device = device if device is not None else accel.resolve()
+    key = (weights, device.backend, device.index)
+    with _MODELS_LOCK:
+        m = _MODELS.get(key)
+    if m is not None:
+        return m
+    m = _build_model(weights, device)      # chậm: không giữ khoá cache
+    with _MODELS_LOCK:
+        return _MODELS.setdefault(key, m)
+
+
+def _detect_with_device(det_rgb: np.ndarray, weights: str, conf: float, imgsz: int,
+                        device: accel.Device, stage=None) -> Tuple[List[Person], accel.Device]:
+    def run(dev: accel.Device) -> List[Person]:
+        model = get_yolo(weights, dev)
+        res = model.predict(det_rgb, imgsz=imgsz, conf=conf, classes=[C.PERSON_CLASS],
+                            verbose=False, retina_masks=True,   # mask độ phân giải gốc -> không mất tay/chân mảnh
+                            **predict_kwargs(dev))[0]
+        return _persons_from_result(res, det_rgb)
+
+    cpu = accel.resolve("cpu")
+    return accel.with_fallback(device, lambda: run(device), lambda: run(cpu), stage=stage)
 
 
 def detect_persons(det_rgb: np.ndarray, weights: str = C.YOLO_WEIGHTS,
-                   conf: float = 0.25, imgsz: int = C.YOLO_IMGSZ) -> List[Person]:
+                   conf: float = 0.25, imgsz: int = C.YOLO_IMGSZ,
+                   device: Optional[accel.Device] = None) -> List[Person]:
     """Trả về danh sách người, sắp xếp theo diện tích box giảm dần."""
-    model = get_yolo(weights)
-    res = model.predict(det_rgb, imgsz=imgsz, conf=conf, classes=[C.PERSON_CLASS],
-                        device="cpu", verbose=False,
-                        retina_masks=True)[0]   # mask độ phân giải gốc -> không mất tay/chân mảnh
+    device = device if device is not None else accel.resolve()
+    return _detect_with_device(det_rgb, weights, conf, imgsz, device)[0]
+
+
+def _persons_from_result(res, det_rgb: np.ndarray) -> List[Person]:
     h, w = det_rgb.shape[:2]
     persons: List[Person] = []
     if res.boxes is None or len(res.boxes) == 0:
@@ -77,7 +145,8 @@ def _run_chain_traced(trace: Trace, rgb: np.ndarray, names: List[str], prefix: s
 
 
 def detect_scene(rgb: np.ndarray, preprocess: str = "auto",
-                 weights: str = C.YOLO_WEIGHTS, trace: Optional[Trace] = None) -> Scene:
+                 weights: str = C.YOLO_WEIGHTS, trace: Optional[Trace] = None,
+                 device_mode: str = "auto") -> Scene:
     """
     Tiền xử lý (theo `preprocess`) -> YOLO. Nếu không thấy ai: thử lại với conf thấp hơn,
     imgsz lớn hơn và (khi preprocess="auto") chuỗi tiền xử lý mạnh hơn.
@@ -102,6 +171,7 @@ def detect_scene(rgb: np.ndarray, preprocess: str = "auto",
             pass
 
     persons: List[Person] = []
+    device = accel.resolve(device_mode)
     attempt = 0
     for attempt, (conf, imgsz) in enumerate(C.DETECT_ATTEMPTS):
         if attempt > 0 and auto:
@@ -109,8 +179,9 @@ def detect_scene(rgb: np.ndarray, preprocess: str = "auto",
             det_img = _run_chain_traced(trace, rgb, names, prefix=f"Thử lại {attempt}: ")
         label = "YOLO-seg phát hiện người" + (f" (thử lại {attempt})" if attempt else "")
         with trace.stage("yolo", label, note=f"conf ≥ {conf}, imgsz {imgsz}") as s:
-            persons = detect_persons(det_img, weights, conf=conf, imgsz=imgsz)
-            s.note += f" → {len(persons)} người"
+            persons, device = _detect_with_device(det_img, weights, conf, imgsz, device, stage=s)
+            s.note += f" → {len(persons)} người · " + (
+                "CPU" if device.kind == "cpu" else f"{device.backend}: {device.name}")
             s.show(_draw_boxes(det_img, persons))
         if persons:
             break
@@ -123,4 +194,5 @@ def detect_scene(rgb: np.ndarray, preprocess: str = "auto",
                       else box_to_mask(persons[suggested].box, rgb.shape))
 
     return Scene(rgb=rgb, persons=persons, det_rgb=det_img, quality=quality.to_dict(),
-                 preprocess=names, attempt=attempt, suggested=suggested, trace=trace)
+                 preprocess=names, attempt=attempt, suggested=suggested, trace=trace,
+                 device=device.to_dict())

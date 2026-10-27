@@ -14,6 +14,7 @@ import threading
 import time
 from collections import OrderedDict
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from . import config as C
@@ -166,6 +167,11 @@ def resolve(mode: Optional[str] = None, backend: Optional[str] = None) -> Device
 def _make_gpu(name: str, dev_name: str) -> Device:
     return Device("gpu", name, dev_name, _RUNTIME.get(name, "torch"),
                   _dtype_for(name), int(C.ACCEL_DEVICE_INDEX))
+
+
+def openvino_ir_dir(weights: str) -> Path:
+    """Thư mục IR OpenVINO của `weights`: <ACCEL_CACHE_DIR>/<tên file không đuôi>_openvino_model/."""
+    return Path(C.ACCEL_CACHE_DIR) / f"{Path(weights).stem}_openvino_model"
 
 
 # --- khoá GPU (FR-108): mọi việc GPU chạy tuần tự, áp cho mọi backend ---------
