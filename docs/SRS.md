@@ -76,7 +76,7 @@ Trình duyệt ──▶ Streamlit frontend (cổng 8501) ──HTTP──▶ Fa
 - Cần Internet ở lần chạy đầu để tải trọng số model (`yolov8s-seg.pt` ≈ 24 MB, BiRefNet-lite ≈ 224 MB).
 
 ### 2.5 Ràng buộc thiết kế
-- **R1.** Chỉ dùng CPU.
+- **R1.** CPU luôn chạy được; GPU (Intel/OpenVINO, NVIDIA/CUDA, Mac/MPS) là tuỳ chọn, chọn bằng `ACCEL_BACKEND`, tự rơi về CPU.
 - **R2.** Ảnh kết quả không bao giờ dùng ảnh đã tiền xử lý; tiền xử lý chỉ phục vụ phát hiện để không đổi màu người chạy.
 - **R3.** Session lưu trong RAM, tối đa 8 session (LRU), không lưu đĩa.
 - **R4.** Ảnh được thu nhỏ về cạnh dài tối đa 1280 px; file tải lên tối đa 25 MB.
@@ -154,7 +154,7 @@ Trạng thái: ✔ = đã triển khai.
 | ID | Yêu cầu | TT |
 |---|---|---|
 | FR-30 | Engine `cf` và `knn`: mask YOLO → GrabCut → trimap → alpha matting (closed-form / KNN) → khử nhiễm màu viền. | ✔ |
-| FR-31 | Engine `birefnet`: BiRefNet cho alpha toàn ảnh, giới hạn trong mask YOLO của người được chọn (nở ra vài px), loại mảnh rời, khử nhiễm màu. | ✔ |
+| FR-31 | Engine `birefnet`: BiRefNet chạy trên ROI quanh người được chọn, sau đó alpha được giới hạn trong mask YOLO của người đó (nở ra vài px), loại mảnh rời, khử nhiễm màu. | ✔ |
 | FR-32 | Engine `focus` (ảnh xoá phông): tính bản đồ độ nét; giữ màu người được chọn và những người khác **nằm cùng mặt phẳng nét**; chỉ áp dụng cho người (đường, logo, vật thể không phải người bị bỏ). Ngưỡng độ nét chỉnh được (10–100%). | ✔ |
 | FR-33 | Độ rộng vùng chưa biết của trimap chỉnh được (0.5%–8% kích thước người). | ✔ |
 | FR-34 | Bước matting closed-form phải có phương án dự phòng (KNN, rồi mask làm mềm) khi bộ giải không hội tụ, để không báo lỗi người dùng. | ✔ |
@@ -220,6 +220,8 @@ Số đo thực tế trên máy phát triển (CPU, ảnh 1280×854, một ngư�
 | NFR-04 | Lần chạy đầu chậm hơn do tải model và biên dịch JIT (numba) – chấp nhận được, có thông báo trên giao diện. | – |
 | NFR-05 | Kéo thanh cường độ cập nhật trong < 100 ms cảm nhận được (xử lý tại trình duyệt). | – |
 | NFR-06 | Giao diện cập nhật tiến độ pipeline với độ trễ ≲ 0.5 s so với lúc bước hoàn thành. | – |
+
+NFR-01..03 là mức tham chiếu trên CPU. Số đo và mục tiêu theo từng thiết bị (CPU, Intel/OpenVINO, NVIDIA/CUDA, Mac/MPS) nằm ở mục 5.7 của [SRS-addendum-v1.1.md](SRS-addendum-v1.1.md); các cột GPU ở đó là mục tiêu chưa đo vì chưa có phần cứng thật.
 
 ### 5.2 Độ tin cậy và chịu lỗi
 - NFR-10: Lỗi trong tác vụ nền không làm sập backend; trả trạng thái `error` kèm thông điệp.
@@ -310,7 +312,9 @@ Tải ảnh ─▶ resize + EXIF ─▶ đánh giá chất lượng ─▶ chu�
 - Hai người chạy chồng nhau mà YOLO gộp thành **một** mask (không có mask riêng của người kia) thì người phía sau vẫn có thể lọt một phần vào kết quả; `occlusion` chỉ xử lý được khi người kia có mask riêng. BiRefNet không tự phân biệt từng người.
 - Engine `focus` giả định ảnh có phông mờ rõ; ảnh nền cũng sắc nét sẽ cho kết quả kém tin cậy. Quầng màu nhạt quanh chân có thể còn do GrabCut.
 - Chất lượng viền phụ thuộc mask GrabCut: matting chỉ sửa được lỗi nằm trong dải chưa biết.
-- BiRefNet-lite chậm (~25 s/ảnh trên CPU); chạy nhiều lần liên tục trong chế độ tự động có thể gây chờ lâu.
+- BiRefNet-lite chậm trên CPU: đo thật (bản rút gọn: 3 ảnh × 3 lần bỏ 1, Intel Core Ultra 7 155H) trung vị 23.6 s/ảnh (p95 25.8 s), xem addendum 5.7; chạy nhiều lần liên tục trong chế độ tự động có thể gây chờ lâu.
+- Tăng tốc ROI (Phase A) **chưa đạt** mục tiêu tốc độ: trên 30 ảnh `hd_bank` engine `cf` chỉ nhanh hơn `FULLRES=1` 1.32× (trung vị 1.38×), mục tiêu ≥ 2×; chất lượng thì đạt (mean IoU 0.9858 ≥ 0.98, SAD 2.02% ≤ 5%). Diện tích ROI trung vị chỉ 2.8% ảnh nên nguyên nhân chưa rõ (xem addendum 5.7).
+- Backend GPU `cuda`, `mps`, `openvino` mới chỉ có test giả lập, chưa chạy trên phần cứng thật; các mục tiêu GPU ở addendum 5.7 chưa được xác nhận.
 - Kết quả mới được kiểm tra trên số ít ảnh; chưa có bộ kiểm thử tự động và chưa đánh giá định lượng (IoU, SAD…).
 - Bản xem pipeline "đang chạy" là HTML tĩnh; chỉ bản hoàn chỉnh mới phóng to được.
 

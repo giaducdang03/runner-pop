@@ -1,7 +1,7 @@
-# Runner – giữ màu người chạy, nền đen trắng (CPU)
+# Runner – giữ màu người chạy, nền đen trắng
 
 YOLO-seg → GrabCut → trimap → alpha matting (pymatting) → khử nhiễm màu viền → ghép.
-Backend FastAPI, giao diện Streamlit. Chạy hoàn toàn trên CPU.
+Backend FastAPI, giao diện Streamlit. Luôn chạy được trên CPU; GPU (Intel/NVIDIA/Mac) là tuỳ chọn, xem mục *Gia tốc phần cứng*.
 
 ## Cài đặt (Windows PowerShell, trong venv)
 
@@ -26,6 +26,95 @@ streamlit run frontend/app.py
 
 Biến môi trường tuỳ chọn: `YOLO_WEIGHTS` (mặc định `yolov8s-seg.pt`, có thể dùng `yolov8n-seg.pt` cho nhanh hơn),
 `API_URL` (mặc định `http://127.0.0.1:8000`).
+
+## Gia tốc phần cứng
+
+CPU **luôn** chạy được. GPU là tuỳ chọn: thiếu gói hay driver của backend nào thì backend đó bị coi là không có và app tự chạy bằng CPU.
+
+### Backend và trạng thái kiểm thử
+
+| Backend | Phần cứng | Đường YOLO | Đường ONNX (BiRefNet) | File cài đặt | Trạng thái kiểm thử |
+|---|---|---|---|---|---|
+| `cpu` | Mọi máy | PyTorch CPU | rembg + onnxruntime CPU | `requirements.txt` | **Đã kiểm thử trên phần cứng thật** (Intel Core Ultra 7 155H, Windows 11; phiên bản ở bảng dưới) |
+| `cuda` | GPU NVIDIA | PyTorch CUDA (`half=True`) | onnxruntime-gpu (`CUDAExecutionProvider`, FP32) | `requirements-cuda.txt` | **chưa kiểm thử trên phần cứng thật — chỉ có test giả lập** |
+| `mps` | Mac Apple Silicon | PyTorch MPS (FP32) | onnxruntime (`CoreMLExecutionProvider`, FP32) | `requirements-mac.txt` | **chưa kiểm thử trên phần cứng thật — chỉ có test giả lập** |
+| `openvino` | GPU Intel (Arc / iGPU) | OpenVINO IR (FP16, xuất một lần vào `ACCEL_CACHE_DIR`) | OpenVINO compile ONNX (FP16) | `requirements-intel.txt` | **chưa kiểm thử trên phần cứng thật — chỉ có test giả lập** |
+
+Máy phát triển không có GPU backend nào (`accel.available_backends()` trả `{}`), nên chưa có số đo hay kết quả chạy thật cho `cuda`, `mps`, `openvino`.
+
+#### Phiên bản driver / runtime
+
+| Backend | Driver / hệ điều hành | Runtime | Ghi chú |
+|---|---|---|---|
+| `cpu` | Windows 11 (10.0.26200), Python 3.13.14 | torch 2.14.1+cpu, onnxruntime 1.31.0, ultralytics 8.4.189, rembg 2.0.86 | đã đo thật |
+| `cuda` | chưa kiểm thử | chưa kiểm thử | chưa kiểm thử |
+| `mps` | chưa kiểm thử | chưa kiểm thử | chưa kiểm thử |
+| `openvino` | chưa kiểm thử | chưa kiểm thử (máy đo chưa cài gói `openvino`) | chưa kiểm thử |
+
+### Cài đặt theo backend
+
+Cài phần chung trước (mục *Cài đặt* ở trên), rồi thêm gói của backend muốn dùng:
+
+```powershell
+# Intel Arc / iGPU (OpenVINO)
+pip install -r requirements-intel.txt
+
+# NVIDIA (CUDA) — torch bản CUDA phải lấy từ PyTorch index, không phải PyPI
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+pip uninstall -y onnxruntime          # BẮT BUỘC, chạy TRƯỚC khi cài onnxruntime-gpu
+pip install -r requirements-cuda.txt  # onnxruntime-gpu
+```
+
+> **Cảnh báo (R19):** `rembg[cpu]` trong `requirements.txt` kéo theo gói `onnxruntime` bản CPU. Hai gói cùng cung cấp module
+> `onnxruntime` và bản CPU che bản GPU, nên `CUDAExecutionProvider` không xuất hiện. Luôn `pip uninstall -y onnxruntime`
+> **trước** `pip install onnxruntime-gpu`. Nếu quên, app không lỗi nhưng chạy CPU và trace ghi đã rơi về CPU.
+
+```bash
+# Mac Apple Silicon (MPS + CoreML)
+pip install -r requirements-mac.txt
+```
+
+### Chọn backend lúc khởi động
+
+Backend được chọn **một lần lúc khởi động** bằng biến môi trường; đổi backend cần khởi động lại backend FastAPI.
+
+```powershell
+# Windows PowerShell
+$env:ACCEL_BACKEND="cuda"; uvicorn backend.main:app --host 127.0.0.1 --port 8000
+```
+
+```bash
+# bash / zsh (macOS, Linux, Git Bash)
+ACCEL_BACKEND=mps uvicorn backend.main:app --host 127.0.0.1 --port 8000
+```
+
+| Biến | Mặc định | Ý nghĩa |
+|---|---|---|
+| `ACCEL_BACKEND` | `auto` | `auto` (tự dò theo thứ tự cuda, mps, openvino) \| `cpu` \| `cuda` \| `mps` \| `openvino` |
+| `ACCEL_DEVICE` | `auto` | Chế độ thiết bị mặc định khi request không nêu: `auto` \| `cpu` \| `gpu` |
+| `ACCEL_DEVICE_INDEX` | `0` | Chọn GPU khi máy có nhiều card |
+| `ACCEL_DTYPE` | `auto` | `auto` \| `fp16` \| `fp32` (chỉ áp cho backend GPU; CPU luôn fp32) |
+| `ACCEL_CACHE_DIR` | `~/.cache/color_pop_runner` | Thư mục cache model đã xuất (vd. OpenVINO IR). Chỉ cache model được ghi đĩa; ảnh người dùng chỉ ở RAM |
+| `ACCEL_MEM_BUDGET_MB` | `3072` | Ngân sách bộ nhớ model nạp cùng lúc (MB), áp cho mọi backend |
+| `ACCEL_UNLOAD_IDLE` | `0` | Giây rảnh trước khi giải phóng model; `0` = không giải phóng |
+| `ACCEL_EXPORT_RETRY_S` | `300` | Xuất/build model lỗi thì không thử lại trong khoảng này (giây) |
+| `BIREFNET_SIZE` | `1024` | Cạnh vuông cố định của đầu vào BiRefNet trên GPU |
+| `WARMUP` | `1` | `0` để tắt nạp sẵn model khi khởi động backend |
+| `FULLRES` | `0` | `1` = bỏ ROI, xử lý toàn ảnh (để so sánh) |
+
+Tên backend gõ sai hoặc backend không dùng được thì app dùng CPU, không báo lỗi lúc khởi động.
+
+### Backend cố định, thiết bị đổi theo request
+
+Backend (cuda/mps/openvino) cố định từ lúc khởi động. Trên thanh bên chỉ lựa chọn `auto | cpu | gpu` đổi được theo từng request:
+`cpu` ép CPU; `auto` và `gpu` dùng GPU của backend đã chọn nếu có, không có thì CPU.
+
+### Khi GPU lỗi: rơi về CPU
+
+Mọi lỗi GPU (thiếu gói, driver reset giữa chừng, hết bộ nhớ, op không hỗ trợ) đều không làm request thất bại. Bước đó chạy lại bằng
+**CPU một cách tường minh**: thiết bị của bước hiện là `CPU` trên sơ đồ pipeline/PDF và trace ghi chú `GPU lỗi, đã dùng CPU: <lý do>`.
+Lỗi bền (build model hỏng) được nhớ trong `ACCEL_EXPORT_RETRY_S` giây để không thử lại ở mỗi request. Hành vi này được kiểm bằng
+`tests/test_gpu_interrupt.py` (GPU giả lập chết ở lần gọi thứ hai).
 
 ## Cách dùng
 
