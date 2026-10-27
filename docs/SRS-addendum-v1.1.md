@@ -115,7 +115,7 @@ màu quanh chân giảm.
 |---|---|---|---|
 | NFR-60 | Phát hiện YOLOv8s-seg | ≈ 3 s | ≤ 0.6 s |
 | NFR-61 | Tách nền `cf`/`knn` (có ROI + upsample) | ≈ 1.5–3 s → ≤ 1 s. **Đo thật (CPU, bản rút gọn):** `cf` 0.70 s, `knn` 1.01 s (ROI); `FULLRES=1`: `cf` 0.64 s, `knn` 1.17 s. Trung vị, 5 ảnh đầu × 4 lần bỏ 1, Intel64 Family 6 Model 170 (22 luồng). Xem ghi chú dưới bảng | ≤ 1 s (matting vẫn trên CPU) |
-| NFR-62 | Tách nền `birefnet` (ROI) | ≈ 25 s → ≤ 10 s. **Đo thật (CPU, bản rút gọn, ROI):** bước `birefnet` trung vị 23.298 s (p95 25.356 s), tổng build_cutout trung vị 23.595 s (p95 25.770 s). 3 ảnh đầu × 3 lần bỏ 1 (n = 6 mẫu), máy và lệnh ở khối "Số đo Phase B" dưới bảng. **Chưa đạt** mục tiêu ≤ 10 s: BiRefNet-lite chạy ở đầu vào cố định 1024×1024 nên ROI không làm nó nhanh hơn | ≤ 5 s |
+| NFR-62 | Tách nền `birefnet` (ROI) | ≈ 25 s → ≤ 10 s. **Đo thật (CPU, bản rút gọn, ROI):** bước `birefnet` trung vị 23.298 s (p95 25.356 s), tổng build_cutout trung vị 23.595 s (p95 25.770 s). 3 ảnh đầu × 3 lần bỏ 1 (n = 6 mẫu), máy và lệnh ở khối "Số đo Phase B" dưới bảng. **Chưa đạt** mục tiêu ≤ 10 s. Nguyên nhân: giả thuyết, chưa đo (BiRefNet-lite chạy ở đầu vào cố định 1024×1024 nên ROI có thể không làm nó nhanh hơn; chưa đo `FULLRES=1` cho birefnet) | ≤ 5 s |
 | NFR-63 | Tách nền `rvm`/`modnet` | ≤ 2 s | ≤ 0.8 s |
 | NFR-64 | Bản đồ nét `freq` | ≤ 150 ms | ≤ 150 ms (CPU) |
 | NFR-65 | Khởi động + warm-up | ≤ 60 s lần đầu (kể cả xuất/biên dịch model), ≤ 20 s các lần sau nhờ cache | – |
@@ -128,7 +128,7 @@ màu quanh chân giảm.
 - Thời gian cùng lần chạy: ROI 0.775 s so với FULLRES 1.025 s (trung bình) → nhanh hơn 1.32× (trung vị 1.38×). **Chưa đạt** mục tiêu ≥ 2×.
   Nguyên nhân chưa được xác lập. Giả thuyết cũ "ảnh nghiệm thu chụp người chiếm phần lớn khung hình nên ROI gần bằng cả ảnh" **đã đo và bị bác bỏ**:
   diện tích ROI / diện tích ảnh trên 30 ảnh đầu (người chính do YOLO gợi ý, `person_roi`): trung vị 2.8%, trung bình 8.0%, nhỏ nhất 1.7%, lớn nhất 34.6%
-  (xem "Số đo Phase B"). Còn lại là giả thuyết, **giả thuyết, chưa đo**: các stage chạy trên toàn ảnh làm việc (`decontaminate` ≈ 0.19–0.20 s, `compose` ≈ 0.10 s
+  (xem "Số đo Phase B"). Phần còn lại **giả thuyết, chưa đo**: các stage chạy trên toàn ảnh làm việc (`decontaminate` ≈ 0.19–0.20 s, `compose` ≈ 0.10 s
   trong lần đo ROI ở Phase B) không giảm theo ROI nên chi phí cố định này chặn mức tăng tốc; chưa đo `FULLRES=1` theo từng stage để xác nhận.
   Quy mô tập ảnh (30 ảnh) nhỏ nên con số 1.32× chỉ mang tính chỉ báo, **giả thuyết, chưa đo** là nó đại diện cho ảnh ngoài tập này.
 - `tools/bench.py` bản **rút gọn** (`--limit 5 --runs 4 --drop 1`, không phải 10 lần bỏ 2): tổng trung vị `cf` 0.699 s (p95 0.823) ROI / 0.644 s (p95 0.670) FULLRES;
@@ -140,10 +140,10 @@ Python 3.13.14, torch 2.14.1+cpu, onnxruntime 1.31.0, ultralytics 8.4.189, rembg
 (`accel.available_backends()` = `{}`), nên **các cột GPU không có số đo: NOT RUN: máy đo không có GPU cuda/mps/openvino**.
 Bản rút gọn, không phải 30 ảnh × 10 lần bỏ 2 theo phương pháp đầy đủ; n = 6 mẫu mỗi stage nên p95 chỉ mang tính chỉ báo.
 - Lệnh: `python tools/bench.py --dir ../dataset/hd_bank_green_marathon_2026_resized --limit 3 --engine birefnet --device cpu --runs 3 --drop 1`
-  → tổng trung vị 23.595 s (p95 25.770 s); `birefnet` 23.298 s (p95 25.356 s), `decontaminate` 0.190 s, `compose` 0.104 s, các stage còn lại ≤ 0.005 s.
+  → tổng trung vị 23.595 s (p95 25.770 s); `birefnet` 23.298 s (p95 25.356 s), `decontaminate` 0.190 s, `compose` 0.104 s.
 - Lệnh: `python tools/bench.py --dir ../dataset/hd_bank_green_marathon_2026_resized --limit 3 --engine cf --device cpu --runs 3 --drop 1`
   → tổng trung vị 0.626 s (p95 0.694 s); `grabcut` 0.198 s, `matting` 0.091 s, `decontaminate` 0.201 s, `compose` 0.105 s.
-- Diện tích ROI / ảnh (30 ảnh đầu, `person_roi` cho người chính do YOLO gợi ý): trung vị 2.8%, trung bình 8.0%, min 1.7%, max 34.6%.
+- Diện tích ROI / ảnh: đo bằng script tạm (không nằm trong repo, không có lệnh `tools/` tương ứng): với 30 ảnh đầu của tập (`tools.common.list_images`, ảnh resize ≤ 1280 px), `load_scene` lấy người chính do YOLO gợi ý, `backend.pipeline.roi.person_roi` dựng ROI (box + lề), lấy (x2−x1)·(y2−y1) / (H·W) của ảnh làm việc; kết quả: trung vị 2.8%, trung bình 8.0%, min 1.7%, max 34.6%.
 
 **Phương pháp đo:** dùng trace hiện có, mỗi cấu hình chạy 10 lần bỏ 2 lần đầu, báo cáo **trung vị và
 p95**; bảng kết quả đưa vào báo cáo đồ án và lấp phần "chưa có đánh giá định lượng" ở mục 7.1 (thêm
