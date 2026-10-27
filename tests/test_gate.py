@@ -28,18 +28,17 @@ def test_gate_zeroes_alpha_outside_dilated_person_mask():
 
 
 def test_gate_drops_detached_blob():
-    alpha, init, box = _case()
-    alpha[:] = 0
-    alpha[50:150, 80:120] = 1.0
-    alpha[160:190, 150:190] = 1.0                    # mảnh rời xa người, ngoài gate -> loại
+    # box cao 400 px -> gate nở r = 16 px; blob nằm TRONG vùng nở nhưng cách thân ~7 px (không chạm mask YOLO)
+    h, w = 500, 500
+    init = np.zeros((h, w), np.uint8)
+    init[50:450, 200:240] = 255
+    box = (200, 50, 240, 450)
+    alpha = np.zeros((h, w), np.float32)
+    alpha[50:450, 200:240] = 1.0
+    alpha[200:220, 247:252] = 1.0
     gated = gate_to_person(alpha, init, box)
-    assert gated[160:190, 150:190].max() == 0.0
-    # mảnh rời nằm trong vùng nở của gate nhưng không dính mask YOLO cũng bị loại
-    alpha2 = np.zeros_like(alpha)
-    alpha2[50:150, 80:120] = 1.0
-    alpha2[60:70, 128:134] = 1.0                     # cách thân ~8px, trong gate (r=5.. nở)
-    gated2 = gate_to_person(alpha2, init, box)
-    assert gated2[100, 100] > 0.9
+    assert gated[100, 220] > 0.9                     # thân vẫn còn
+    assert gated[200:220, 247:252].max() == 0.0      # mảnh rời bị loại bởi bộ lọc thành phần
 
 
 def test_gate_zeroes_excluded_region():
@@ -102,3 +101,32 @@ def test_birefnet_engine_runs_on_roi_and_caches_alpha(monkeypatch, make_scene):
         outside[roi.y1:roi.y2, roi.x1:roi.x2] = False
         assert (c.alpha[outside] == 0).all()
         assert c.alpha[130, 155] > 0.9
+
+
+def test_birefnet_engine_pastes_alpha_at_exact_position(monkeypatch, make_scene):
+    scene, box = _scene(make_scene)
+    person = scene.persons[0]
+    roi = person_roi(scene, person)
+    assert roi.scale == 1.0
+
+    def fake(rgb):                                   # alpha đúng hình người (đỏ) trong ROI
+        return (rgb[..., 0] > 200).astype(np.float32)
+
+    monkeypatch.setattr(bf_mod, "birefnet_alpha", fake)
+    c = build_cutout(scene, person, "birefnet", SegParams(cache=StageCache()))
+    x1, y1, x2, y2 = box
+    assert c.alpha[y1 - 1, 155] < 0.1 and c.alpha[y1 + 1, 155] > 0.9
+    assert c.alpha[y2 - 2, 155] > 0.9 and c.alpha[y2 + 1, 155] < 0.1
+    assert c.alpha[130, x1 - 1] < 0.1 and c.alpha[130, x1 + 1] > 0.9
+    assert c.alpha[130, x2 - 2] > 0.9 and c.alpha[130, x2 + 1] < 0.1
+
+
+def test_birefnet_engine_gate_cuts_alpha_inside_roi(monkeypatch, make_scene):
+    scene, box = _scene(make_scene)
+    person = scene.persons[0]
+    roi = person_roi(scene, person)
+    monkeypatch.setattr(bf_mod, "birefnet_alpha", lambda rgb: np.ones(rgb.shape[:2], np.float32))
+    c = build_cutout(scene, person, "birefnet", SegParams(cache=StageCache()))
+    # góc ROI (xa người hơn vùng nở của gate) phải về 0 dù model trả toàn 1
+    assert c.alpha[roi.y1, roi.x1] == 0.0 and c.alpha[roi.y2 - 1, roi.x2 - 1] == 0.0
+    assert c.alpha[130, 155] > 0.9
