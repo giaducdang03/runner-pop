@@ -24,6 +24,7 @@ from pydantic import BaseModel
 from . import pipeline as P
 from .report import build_report
 from .pipeline import config as C
+from .pipeline.cache import StageCache
 
 MAX_SESSIONS = int(os.environ.get("MAX_SESSIONS", "8"))
 MAX_UPLOAD_MB = 25
@@ -51,6 +52,7 @@ class Session:
     cutout: Optional[P.Cutout] = None
     jobs: Dict[str, Job] = field(default_factory=dict)
     meta: dict = field(default_factory=dict)         # cài đặt lần tách nền gần nhất (cho báo cáo)
+    cache: StageCache = field(default_factory=StageCache)  # kết quả trung gian theo khoá (FR-94)
 
     @property
     def persons(self) -> List[P.Person]:
@@ -184,6 +186,7 @@ def detect(file: UploadFile = File(...),
     _put(sid, s)
 
     def work() -> dict:
+        s.cache.clear()
         s.scene = P.detect_scene(rgb, preprocess, C.YOLO_WEIGHTS, trace=job.trace)
         return _detect_out(sid, s.scene).model_dump()
 
@@ -280,7 +283,8 @@ def process(
     def work() -> dict:
         t0 = time.time()
         s.cutout = P.build_cutout(s.scene, chosen, method,
-                                  P.SegParams(band_frac=band, focus_frac=focus), trace=job.trace)
+                                  P.SegParams(band_frac=band, focus_frac=focus,
+                                              cache=s.cache, device_mode="auto"), trace=job.trace)
         s.meta = {"method": method, "band": band, "focus": focus, "person": chosen.idx}
         return ProcessOut(
             session_id=sid, person=chosen.idx, method=method,

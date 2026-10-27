@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from .cache import StageCache
 from .trace import Trace
 
 
@@ -44,6 +45,12 @@ class SegParams:
     band_frac: float = 0.02      # bề rộng vùng unknown / kích thước người
     focus_frac: float = 0.3      # ngưỡng độ nét (engine "focus")
     trace: Trace = field(default_factory=Trace, repr=False)   # engine ghi các bước vào đây
+    cache: Optional[StageCache] = field(default=None, repr=False)  # cache trung gian của session
+    device_mode: str = "auto"    # auto | cpu | gpu - chọn theo từng request
+
+    def cached(self, key: tuple, build: Callable[[], Any]) -> Any:
+        """Dùng cache nếu có, không thì chỉ gọi build()."""
+        return self.cache.get_or(key, build) if self.cache is not None else build()
 
 
 @dataclass
