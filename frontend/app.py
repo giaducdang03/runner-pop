@@ -17,7 +17,7 @@ import requests
 import streamlit as st
 import streamlit.components.v1 as components
 
-from ui_helpers import device_line, pick_default_engine, should_auto_run
+from ui_helpers import device_line, is_warming, pick_default_engine, should_auto_run, should_poll
 
 API = os.environ.get("API_URL", "http://127.0.0.1:8000")
 
@@ -174,6 +174,19 @@ def follow_job(slot, sid: str, phase: str, title: str):
     return r, stages
 
 
+@st.fragment(run_every=2)
+def warm_status():
+    """Hiện trạng thái warm-up và hỏi lại /health mỗi 2 s; hết "running" thì chạy lại cả script để auto-run tiếp tục."""
+    try:
+        state = api_get("/health").json().get("warmup")
+    except Exception:
+        state = None
+    if should_poll(state):
+        st.info("Đang chuẩn bị model…")
+    else:
+        st.rerun()
+
+
 # ---------------------------------------------------------------- sidebar
 with st.sidebar:
     st.header("Cài đặt")
@@ -209,9 +222,9 @@ with st.sidebar:
             avail = h.get("available_backends") or {}
             st.caption("Backend khả dụng: " + (", ".join(f"{k} ({v})" for k, v in avail.items()) or "chỉ CPU"))
             st.caption("Đổi backend cần khởi động lại backend với biến môi trường ACCEL_BACKEND.")
-        warming = h.get("warmup") == "running"
-        if warming:
-            st.info("Đang chuẩn bị model…")
+        warming = is_warming(h.get("warmup"))
+        if should_poll(h.get("warmup")):
+            warm_status()
         elif h.get("warmup") == "error":
             st.warning(f"Chuẩn bị model lỗi, lần chạy đầu sẽ chậm: {h.get('warmup_detail', '')}")
     except Exception:

@@ -16,6 +16,16 @@ def pick_default_engine(opts: dict, names: List[str]) -> str:
     return d if d in names else names[0]
 
 
+def is_warming(warmup_state: Optional[str]) -> bool:
+    """Chỉ "running" mới chặn giao diện; idle / done / error / thiếu khoá đều coi là không còn warm-up."""
+    return warmup_state == "running"
+
+
+def should_poll(warmup_state: Optional[str]) -> bool:
+    """Có cần hỏi lại /health định kỳ không (cho tới khi warm-up xong)."""
+    return is_warming(warmup_state)
+
+
 def should_auto_run(auto: bool, has_target: bool, sig, last_sig: Optional[object], warming: bool) -> bool:
     """Chạy tự động khi: bật auto, có người/box, tổ hợp tham số mới, và backend không đang warm-up."""
     return bool(auto and has_target and not warming and last_sig != sig)

@@ -18,6 +18,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "frontend"))
 import ui_helpers  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _reset_warmup():
+    """Trả _WARMUP về trạng thái ban đầu để các test không rò rỉ trạng thái cho nhau."""
+    main._set_warmup("idle", "not started")
+    yield
+    main._set_warmup("idle", "not started")
+
+
 @pytest.fixture
 def client():
     return TestClient(main.app)      # không vào lifespan -> không chạy warm-up
@@ -40,7 +48,7 @@ def test_health_reports_device_and_warmup(client):
     assert {"device", "backend", "available_backends", "warmup", "warmup_detail"} <= set(j)
     assert j["ok"] is True and "yolo_available" in j and "weights" in j
     assert j["backend"] == j["device"]["backend"]
-    assert j["warmup"] in ("running", "done", "error")
+    assert j["warmup"] == "idle"          # chưa vào lifespan -> không bao giờ kẹt "running"
 
 
 def test_options_reports_devices_and_default_engine(client):
@@ -135,6 +143,36 @@ def test_lifespan_starts_warmup_thread(monkeypatch):
     monkeypatch.setattr(main, "warmup", ev.set)
     with TestClient(main.app):
         assert ev.wait(2)
+
+
+def test_lifespan_goes_running_then_done(monkeypatch):
+    import threading
+    seen, gate, fin = {}, threading.Event(), threading.Event()
+
+    def fake_warmup():
+        seen["during"] = main._WARMUP["state"]
+        gate.wait(2)
+        main._set_warmup("done", "fake")
+        fin.set()
+
+    monkeypatch.setattr(main, "warmup", fake_warmup)
+    monkeypatch.setattr(main.C, "WARMUP_ON_START", True)
+    with TestClient(main.app) as c:
+        assert c.get("/health").json()["warmup"] == "running"
+        gate.set()
+        assert fin.wait(2)
+        assert c.get("/health").json()["warmup"] == "done"
+    assert seen["during"] == "running"
+
+
+def test_initial_warmup_state_is_idle():
+    assert main._WARMUP["state"] == "idle"
+
+
+def test_ui_helpers_warming_states():
+    for s in ("idle", "done", "error", None):
+        assert not ui_helpers.is_warming(s) and not ui_helpers.should_poll(s)
+    assert ui_helpers.is_warming("running") and ui_helpers.should_poll("running")
 
 
 def test_health_never_blocks_on_warmup(client, monkeypatch):

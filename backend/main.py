@@ -34,7 +34,7 @@ MAX_UPLOAD_MB = 25
 # --------------------------------------------------------------------------
 # Warm-up (FR-106): nạp sẵn model ở thread nền, /health chỉ đọc trạng thái
 # --------------------------------------------------------------------------
-_WARMUP: Dict[str, str] = {"state": "running", "detail": ""}   # running | done | error
+_WARMUP: Dict[str, str] = {"state": "idle", "detail": "not started"}   # idle | running | done | error
 
 
 def _set_warmup(state: str, detail: str = "") -> None:
@@ -80,6 +80,8 @@ def warmup() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    if C.WARMUP_ON_START:
+        _set_warmup("running", "")          # chỉ lifespan mới đặt "running", ngay trước khi chạy thread
     threading.Thread(target=warmup, daemon=True, name="warmup").start()
     yield
 
