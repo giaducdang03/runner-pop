@@ -100,6 +100,7 @@ ACCEL_BACKEND=mps uvicorn backend.main:app --host 127.0.0.1 --port 8000
 | `ACCEL_EXPORT_RETRY_S` | `300` | Xuất/build model lỗi thì không thử lại trong khoảng này (giây) |
 | `BIREFNET_SIZE` | `1024` | Cạnh vuông cố định của đầu vào BiRefNet trên GPU |
 | `WARMUP` | `1` | `0` để tắt nạp sẵn model khi khởi động backend |
+| `DEFAULT_ENGINE` | `birefnet` | Engine chọn sẵn trên giao diện và được nạp sẵn lúc khởi động (`cf`, `knn`, `focus`, `birefnet`). Không có trong danh sách thì dùng `cf` |
 | `FULLRES` | `0` | `1` = bỏ ROI, xử lý toàn ảnh (để so sánh) |
 
 Tên backend gõ sai hoặc backend không dùng được thì app dùng CPU, không báo lỗi lúc khởi động.

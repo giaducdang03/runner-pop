@@ -43,7 +43,9 @@ def _set_warmup(state: str, detail: str = "") -> None:
 
 
 def default_engine(names: List[str]) -> str:
-    """Engine nhẹ chọn sẵn: rvm > modnet > cf, không có thì engine đầu tiên."""
+    """Engine chọn sẵn: `DEFAULT_ENGINE` (mặc định birefnet) nếu có; không thì rvm > modnet > cf, rồi engine đầu tiên."""
+    if C.DEFAULT_ENGINE in names:
+        return C.DEFAULT_ENGINE
     for n in ("rvm", "modnet", "cf"):
         if n in names:
             return n

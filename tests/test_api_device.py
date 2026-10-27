@@ -68,12 +68,25 @@ def test_detect_rejects_unknown_device(client):
     assert r.status_code == 422
 
 
-def test_default_engine_priority_and_fallback():
-    assert main.default_engine(["cf", "birefnet", "modnet", "rvm"]) == "rvm"
+def test_default_engine_is_birefnet_when_available(monkeypatch):
+    monkeypatch.setattr(main.C, "DEFAULT_ENGINE", "birefnet")
+    assert main.default_engine(["cf", "birefnet", "modnet", "rvm"]) == "birefnet"
+    assert main.default_engine(["birefnet", "focus"]) == "birefnet"
+
+
+def test_default_engine_priority_and_fallback(monkeypatch):
+    # DEFAULT_ENGINE không có trong danh sách -> rvm > modnet > cf > engine đầu tiên
+    monkeypatch.setattr(main.C, "DEFAULT_ENGINE", "birefnet")
+    assert main.default_engine(["cf", "modnet", "rvm"]) == "rvm"
     assert main.default_engine(["cf", "modnet", "focus"]) == "modnet"
     assert main.default_engine(["focus", "cf"]) == "cf"
-    assert main.default_engine(["birefnet", "focus"]) == "birefnet"
+    assert main.default_engine(["focus", "knn"]) == "focus"
     assert main.default_engine([]) == ""
+
+
+def test_default_engine_follows_config(monkeypatch):
+    monkeypatch.setattr(main.C, "DEFAULT_ENGINE", "focus")
+    assert main.default_engine(["cf", "birefnet", "focus"]) == "focus"
 
 
 def test_detect_forwards_device_mode(client, monkeypatch):
