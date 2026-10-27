@@ -104,8 +104,8 @@ def birefnet_alpha(rgb: np.ndarray, device: Optional[accel.Device] = None,
     """BiRefNet -> alpha float32 HxW 0..1 cho ảnh đưa vào (ảnh ROI ở độ phân giải làm việc).
     CPU: rembg; GPU: onnx_runner, lỗi thì rơi về rembg CPU và ghi chú vào `stage.note`."""
     device = device if device is not None else accel.resolve()
-    _set_device(stage, device)
     if device.kind != "gpu":
+        _set_device(stage, device)
         _note(stage, " · CPU")
         return _cpu_alpha(rgb)
     if accel.onnx_runner_failed(_runner_key(), device):
@@ -138,10 +138,16 @@ def run(scene: Scene, person: Person, params: SegParams) -> Cutout:
     with t.stage("birefnet", "BiRefNet: alpha trên ROI",
                  note=f"{C.BIREFNET_MODEL}, ROI {w}×{h} (scale {roi.scale:.2f})") as s:
         device = accel.resolve(params.device_mode)
-        s.set_device(device)      # birefnet_alpha ghi đè bằng thiết bị thực dùng khi chạy (kể cả rơi về CPU)
-        alpha_raw = params.cached(
+
+        def compute():
+            a = birefnet_alpha(scene_w.rgb, device, stage=s)
+            # birefnet_alpha ghi thiết bị thực dùng (kể cả rơi về CPU) vào stage; lưu cùng alpha (R25)
+            return a, (s.device_obj if getattr(s, "device_obj", None) is not None else device)
+
+        alpha_raw, used = params.cached(
             ("birefnet", person.idx, person.box, device.backend, device.index, device.dtype),
-            lambda: birefnet_alpha(scene_w.rgb, device, stage=s))
+            compute)
+        s.set_device(used)        # cache hit: ghi thiết bị đã thực sự tính ra alpha, không phải thiết bị được yêu cầu
         s.show(alpha_raw)
     with t.stage("occlusion", "Loại phần của người khác (thứ tự trước/sau theo vị trí chân)",
                  note=f"{len(scene.others(person))} người khác") as s:

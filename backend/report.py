@@ -129,7 +129,7 @@ class _Report(FPDF):
                     self.set_xy(x + 2, y_dev)
                     self.set_font("vn", "", 7.5)
                     self.set_text_color(120)
-                    self.cell(cw - 4, 3.6, f"Thiết bị: {s.device}")
+                    self.cell(cw - 4, 3.6, fit_text(f"Thiết bị: {s.device}", cw - 4, self.get_string_width))
                     self.set_text_color(0)
                 y_img = y_dev + dh + 1
                 if s.image:
@@ -148,6 +148,20 @@ def roi_note(stages) -> str:
         if st.key == "roi":
             return st.note or "-"
     return "-"
+
+
+def fit_text(text: str, max_w: float, measure) -> str:
+    """Cắt `text` cho vừa `max_w` (đo bằng `measure(chuỗi) -> độ rộng`), thêm "…" khi bị cắt."""
+    if not text or measure(text) <= max_w:
+        return text
+    lo, hi = 0, len(text)          # tìm số ký tự lớn nhất sao cho text[:n] + "…" vừa
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if measure(text[:mid] + "…") <= max_w:
+            lo = mid
+        else:
+            hi = mid - 1
+    return text[:lo] + "…"
 
 
 _HEAVY = (("yolo", "YOLO"), ("birefnet", "BiRefNet"), ("matting", "Matting"),

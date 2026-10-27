@@ -76,9 +76,11 @@ class _Handle:
         self.note = note
         self._image: Optional[bytes] = None
         self.device = ""
+        self.device_obj = None      # Device gốc, để engine lưu vào cache
 
     def set_device(self, device) -> None:
         """Ghi thiết bị (accel.Device) thực sự dùng cho bước này."""
+        self.device_obj = device
         self.device = device_label(device)
 
     def show(self, img: np.ndarray, heat: bool = False) -> None:

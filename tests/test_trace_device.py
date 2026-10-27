@@ -13,6 +13,8 @@ from backend.pipeline.segment import birefnet as bf
 from backend.pipeline.trace import Stage, Trace
 
 import test_detect_device as td
+from test_birefnet_device import called  # noqa: F401  (fixture rembg/runner giả)
+from backend.pipeline.cache import StageCache
 
 CPU = Device("cpu", "cpu", "CPU", "torch", "fp32")
 CUDA = Device("gpu", "cuda", "NVIDIA GeForce RTX", "torch", "fp16", 0)
@@ -109,19 +111,6 @@ def test_birefnet_stage_records_requested_device(monkeypatch, make_scene):
     assert next(s for s in c.trace.stages if s.key == "birefnet").device.startswith("cuda:")
 
 
-def test_birefnet_stage_records_device_actually_used(monkeypatch, make_scene):
-    scene = _scene(make_scene)
-
-    def fake(rgb, device=None, stage=None):
-        stage.set_device(CPU)          # giả lập GPU lỗi -> rơi về CPU
-        return np.ones(rgb.shape[:2], np.float32)
-
-    monkeypatch.setattr(bf, "birefnet_alpha", fake)
-    monkeypatch.setattr(accel, "resolve", lambda *a, **k: CUDA)
-    c = build_cutout(scene, scene.persons[0], "birefnet", SegParams())
-    assert next(s for s in c.trace.stages if s.key == "birefnet").device == "CPU"
-
-
 def test_birefnet_alpha_sets_device_on_real_paths(monkeypatch):
     monkeypatch.setattr(bf, "_cpu_alpha", lambda rgb: np.ones(rgb.shape[:2], np.float32))
     t = Trace()
@@ -140,3 +129,65 @@ def test_device_summary():
     assert report.device_summary(None) == "-"
     assert report.device_summary([Stage("yolo", "y", 0.1, device="CPU")],
                                  [Stage("matting", "m", 0.1, device="CPU")]) == "YOLO: CPU · Matting: CPU"
+
+
+def test_stage_records_device_even_if_body_raises():
+    t = Trace()
+    with pytest.raises(RuntimeError):
+        with t.stage("a", "A") as s:
+            s.set_device(CUDA)
+            raise RuntimeError("boom")
+    assert t.stages[0].device == "cuda: NVIDIA GeForce RTX (fp16)"
+
+
+def _bf_stage(c):
+    return next(s for s in c.trace.stages if s.key == "birefnet")
+
+
+def _boom(*a, **k):
+    raise RuntimeError("gpu boom")
+
+
+def _resolve(mode=None, backend=None):
+    return CPU if mode == "cpu" else CUDA
+
+
+def test_birefnet_real_fallback_records_cpu_then_cache_hit_keeps_cpu(called, monkeypatch, make_scene):
+    scene = _scene(make_scene)
+    person = scene.persons[0]
+    monkeypatch.setattr(accel, "resolve", _resolve)
+    monkeypatch.setattr(accel, "onnx_runner", _boom)
+    cache = StageCache()
+    c1 = build_cutout(scene, person, "birefnet", SegParams(cache=cache))
+    assert _bf_stage(c1).device == "CPU" and called["rembg"] == 1
+    c2 = build_cutout(scene, person, "birefnet", SegParams(cache=cache, band_frac=0.05))
+    assert called["rembg"] == 1                      # cache hit: không chạy lại
+    assert _bf_stage(c2).device == "CPU"             # thiết bị đã tính ra alpha, không phải thiết bị được yêu cầu
+
+
+def test_birefnet_gpu_success_then_cache_hit_records_gpu(called, monkeypatch, make_scene):
+    scene = _scene(make_scene)
+    person = scene.persons[0]
+    monkeypatch.setattr(accel, "resolve", _resolve)
+    cache = StageCache()
+    c1 = build_cutout(scene, person, "birefnet", SegParams(cache=cache))
+    n = called["runner"]
+    c2 = build_cutout(scene, person, "birefnet", SegParams(cache=cache, band_frac=0.05))
+    assert called["runner"] == n and called["rembg"] == 0
+    assert _bf_stage(c1).device == _bf_stage(c2).device == "cuda: NVIDIA GeForce RTX (fp16)"
+
+
+def test_birefnet_remembered_failure_records_cpu(called, monkeypatch, make_scene):
+    scene = _scene(make_scene)
+    monkeypatch.setattr(accel, "resolve", _resolve)
+    monkeypatch.setattr(accel, "onnx_runner_failed", lambda key, device: True)
+    c = build_cutout(scene, scene.persons[0], "birefnet", SegParams())
+    assert called["runner"] == 0 and _bf_stage(c).device == "CPU"
+
+
+def test_fit_text_short_unchanged_long_truncated_empty():
+    measure = lambda t: float(len(t))
+    assert report.fit_text("abc", 10, measure) == "abc"
+    out = report.fit_text("x" * 50, 10, measure)
+    assert out.endswith("…") and measure(out) <= 10 and len(out) > 1
+    assert report.fit_text("", 10, measure) == ""
