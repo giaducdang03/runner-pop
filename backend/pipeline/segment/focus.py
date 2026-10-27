@@ -9,6 +9,7 @@ from typing import List, Optional
 import cv2
 import numpy as np
 
+from .. import accel
 from ..masks import fill_small_holes, mask_bbox
 from ..schema import Cutout, Person, Scene, SegParams
 from ..roi import active_roi, roi_stage
@@ -114,6 +115,7 @@ def run(scene: Scene, person: Person, params: SegParams) -> Cutout:
                             scene_w.others(person_w), scale=roi.scale)
             s.overlay(scene_w.rgb, fm)
         with t.stage("grabcut", "GrabCut tinh chỉnh biên", note="khởi tạo từ mặt phẳng nét") as s:
+            s.set_device(accel.resolve("cpu"))
             mask = refine_mask_grabcut(scene_w.rgb, fm, mask_bbox(fm))
             s.overlay(scene_w.rgb, mask)
         return mask

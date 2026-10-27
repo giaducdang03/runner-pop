@@ -6,6 +6,7 @@ from typing import Optional
 import cv2
 import numpy as np
 
+from . import accel
 from .roi import Roi, upsample_alpha, upsample_rgb
 from .schema import Cutout
 from .trace import Trace
@@ -109,6 +110,7 @@ def finish_cutout(rgb_f: np.ndarray, alpha_work: np.ndarray, trimap_work: np.nda
     trimap = roi.paste(tri.astype(np.uint8), fill=0)
     with (trace or Trace()).stage("decontaminate", "Khử nhiễm màu viền (ước lượng F / B)",
                                   note="ảnh ≈ α·F + (1−α)·B, tính ở độ phân giải làm việc") as s:
+        s.set_device(accel.resolve("cpu"))
         # khử nhiễm ở độ phân giải làm việc (FR-93), rồi nâng F/B bằng guided filter
         rgb_work = roi.to_work(rgb_f)
         fg_work, bg_work = decontaminate(rgb_work, alpha_work.astype(np.float32))

@@ -62,6 +62,13 @@ class Device:
         return ["CPUExecutionProvider"]
 
 
+def device_label(device: "Device") -> str:
+    """Nhãn ngắn cho trace/PDF: "CPU" hoặc "<backend>: <tên> (<dtype>)"."""
+    if device.kind == "cpu":
+        return "CPU"
+    return f"{device.backend}: {device.name} ({device.dtype})"
+
+
 @dataclass(frozen=True)
 class Backend:
     name: str

@@ -212,6 +212,7 @@ def detect_scene(rgb: np.ndarray, preprocess: str = "auto",
         label = "YOLO-seg phát hiện người" + (f" (thử lại {attempt})" if attempt else "")
         with trace.stage("yolo", label, note=f"conf ≥ {conf}, imgsz {imgsz}") as s:
             persons, device = _detect_with_device(det_img, weights, conf, imgsz, device, stage=s)
+            s.set_device(device)
             s.note += f" → {len(persons)} người · " + (
                 "CPU" if device.kind == "cpu" else f"{device.backend}: {device.name}")
             s.show(_draw_boxes(det_img, persons))

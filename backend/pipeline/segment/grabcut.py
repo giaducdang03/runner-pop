@@ -6,6 +6,7 @@ from typing import Optional, Tuple
 import cv2
 import numpy as np
 
+from .. import accel
 from ..masks import fill_small_holes, keep_components_overlapping
 from ..matting import finish_cutout, make_trimap, matte
 from ..occlusion import exclusion_mask
@@ -91,6 +92,7 @@ def cutout_from_mask(rgb_f: np.ndarray, mask_work: np.ndarray, roi: Roi,
     with t.stage("matting", "Alpha matting",
                  note=("closed-form (pymatting)" if method == "cf" else "KNN (pymatting)")
                  + f", ROI {w}×{h}") as s:
+        s.set_device(accel.resolve("cpu"))
         alpha = matte(rgb_work, tri, method=method)
         s.show(alpha)
     return finish_cutout(rgb_f, alpha, tri, roi, t)
@@ -117,6 +119,7 @@ def _make_engine(method: str):
                 excl = exclusion_mask(scene_w, person_w, init)
                 s.overlay(scene_w.rgb, excl.astype(np.uint8) * 255, color=(235, 60, 60))
             with t.stage("grabcut", "GrabCut tinh chỉnh biên", note="khởi tạo từ mask YOLO, 4 vòng") as s:
+                s.set_device(accel.resolve("cpu"))
                 mask = refine_mask_grabcut(scene_w.rgb, init, person_w.box, exclude=excl)
                 s.overlay(scene_w.rgb, mask)
             return mask
@@ -126,6 +129,7 @@ def _make_engine(method: str):
         if not built:   # lấy từ cache: vẫn ghi roi + grabcut để sơ đồ pipeline đủ bước
             roi_stage(t, scene.rgb, roi)
             with t.stage("grabcut", "GrabCut tinh chỉnh biên", note="dùng lại mask đã tính (cache)") as s:
+                s.set_device(accel.resolve("cpu"))
                 s.overlay(roi.to_work(scene.rgb), mask_work)
         return cutout_from_mask(to_float(scene.rgb), mask_work, roi, params, method)
     return run

@@ -94,20 +94,28 @@ def _note(stage, text: str) -> None:
         stage.note = (getattr(stage, "note", "") or "") + text
 
 
+def _set_device(stage, device: accel.Device) -> None:
+    if stage is not None and hasattr(stage, "set_device"):
+        stage.set_device(device)
+
+
 def birefnet_alpha(rgb: np.ndarray, device: Optional[accel.Device] = None,
                    stage=None) -> np.ndarray:
     """BiRefNet -> alpha float32 HxW 0..1 cho ảnh đưa vào (ảnh ROI ở độ phân giải làm việc).
     CPU: rembg; GPU: onnx_runner, lỗi thì rơi về rembg CPU và ghi chú vào `stage.note`."""
     device = device if device is not None else accel.resolve()
+    _set_device(stage, device)
     if device.kind != "gpu":
         _note(stage, " · CPU")
         return _cpu_alpha(rgb)
     if accel.onnx_runner_failed(_runner_key(), device):
         # R22: lỗi build còn được nhớ -> chạy CPU luôn, không thử GPU mỗi request.
+        _set_device(stage, accel.resolve("cpu"))
         _note(stage, f" · {device.backend} vừa lỗi, dùng CPU")
         return _cpu_alpha(rgb)
     alpha, used = accel.with_fallback(device, lambda: _gpu_alpha(rgb, device),
                                       lambda: _cpu_alpha(rgb), stage=stage)
+    _set_device(stage, used)
     _note(stage, " · CPU" if used.kind == "cpu" else f" · {used.backend}: {used.name}")
     return alpha
 
@@ -130,6 +138,7 @@ def run(scene: Scene, person: Person, params: SegParams) -> Cutout:
     with t.stage("birefnet", "BiRefNet: alpha trên ROI",
                  note=f"{C.BIREFNET_MODEL}, ROI {w}×{h} (scale {roi.scale:.2f})") as s:
         device = accel.resolve(params.device_mode)
+        s.set_device(device)      # birefnet_alpha ghi đè bằng thiết bị thực dùng khi chạy (kể cả rơi về CPU)
         alpha_raw = params.cached(
             ("birefnet", person.idx, person.box, device.backend, device.index, device.dtype),
             lambda: birefnet_alpha(scene_w.rgb, device, stage=s))

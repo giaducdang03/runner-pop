@@ -107,11 +107,12 @@ class _Report(FPDF):
                 if s.image:
                     iw, ih = Image.open(io.BytesIO(s.image)).size
                     img_h = (cw - 4) * ih / iw
-                metrics.append((label_lines, note_lines, img_h))
-            row_h = max(4 + len(m[0]) * 4.4 + m[2] + 2 + len(m[1]) * 3.8 + 3 for m in metrics) + 2
+                dev_h = 3.6 if s.device else 0.0
+                metrics.append((label_lines, note_lines, img_h, dev_h))
+            row_h = max(4 + len(m[0]) * 4.4 + m[3] + m[2] + 2 + len(m[1]) * 3.8 + 3 for m in metrics) + 2
             self.ensure(row_h + 2)
             y0 = self.get_y()
-            for i, (s, (ll, nl, ih)) in enumerate(zip(row, metrics)):
+            for i, (s, (ll, nl, ih, dh)) in enumerate(zip(row, metrics)):
                 x = self.l_margin + i * (cw + gap)
                 self.set_draw_color(190)
                 self.rect(x, y0, cw, row_h)
@@ -123,7 +124,14 @@ class _Report(FPDF):
                 self.set_xy(x + 2, y0 + 4.5)
                 self.set_font("vn", "B", 9)
                 self.multi_cell(cw - 4, 4.4, s.label, new_x="LEFT", new_y="NEXT")
-                y_img = y0 + 4.5 + len(ll) * 4.4 + 1
+                y_dev = y0 + 4.5 + len(ll) * 4.4
+                if s.device:
+                    self.set_xy(x + 2, y_dev)
+                    self.set_font("vn", "", 7.5)
+                    self.set_text_color(120)
+                    self.cell(cw - 4, 3.6, f"Thiết bị: {s.device}")
+                    self.set_text_color(0)
+                y_img = y_dev + dh + 1
                 if s.image:
                     self.image(io.BytesIO(s.image), x=x + 2, y=y_img, w=cw - 4)
                 self.set_xy(x + 2, y_img + ih + 1.5)
@@ -140,6 +148,22 @@ def roi_note(stages) -> str:
         if st.key == "roi":
             return st.note or "-"
     return "-"
+
+
+_HEAVY = (("yolo", "YOLO"), ("birefnet", "BiRefNet"), ("matting", "Matting"),
+          ("rvm", "RVM"), ("modnet", "MODNet"))
+
+
+def device_summary(*stage_lists) -> str:
+    """Tóm tắt thiết bị của các bước nặng, vd "YOLO: CPU · BiRefNet: cuda: X (fp16)"; thiếu thì "-".
+    Nhận một hay nhiều danh sách stage; bước lặp lại (thử lại YOLO) lấy lần cuối."""
+    found = {}
+    for stages in stage_lists:
+        for st in stages or []:
+            if st.device:
+                found[st.key] = st.device
+    parts = [f"{label}: {found[key]}" for key, label in _HEAVY if key in found]
+    return " · ".join(parts) or "-"
 
 
 def build_report(rgb: np.ndarray, scene: P.Scene, cutout: Optional[P.Cutout], meta: dict,
@@ -177,6 +201,7 @@ def build_report(rgb: np.ndarray, scene: P.Scene, cutout: Optional[P.Cutout], me
         pdf.kv([
             ("Thuật toán", labels.get(method, method)),
             ("Vùng xử lý", roi_note(cutout.trace.stages if cutout and cutout.trace else None)),
+            ("Thiết bị", device_summary(scene.trace.stages, cutout.trace.stages if cutout and cutout.trace else None)),
             ("Độ rộng vùng viền", f"{meta.get('band', 0):.1%} kích thước người"),
             *([("Ngưỡng độ nét", f"{meta.get('focus', 0):.0%}")] if method == "focus" else []),
             ("Cường độ nền đen trắng", f"{intensity:.0%}"),

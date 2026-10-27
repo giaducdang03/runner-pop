@@ -19,6 +19,8 @@ from typing import List, Optional
 import cv2
 import numpy as np
 
+from .accel import device_label
+
 THUMB = 720      # cạnh dài tối đa của ảnh minh hoạ (đủ rõ khi phóng to)
 
 
@@ -29,6 +31,7 @@ class Stage:
     seconds: float
     note: str = ""
     image: Optional[bytes] = None      # JPEG
+    device: str = ""                   # thiết bị chạy bước nặng ("CPU", "cuda: ... (fp16)"); rỗng nếu không áp dụng
 
 
 def to_vis(img: np.ndarray, heat: bool = False) -> np.ndarray:
@@ -72,6 +75,11 @@ class _Handle:
     def __init__(self, note: str):
         self.note = note
         self._image: Optional[bytes] = None
+        self.device = ""
+
+    def set_device(self, device) -> None:
+        """Ghi thiết bị (accel.Device) thực sự dùng cho bước này."""
+        self.device = device_label(device)
 
     def show(self, img: np.ndarray, heat: bool = False) -> None:
         self._image = _encode(to_vis(img, heat))
@@ -93,13 +101,13 @@ class Trace:
         try:
             yield h
         finally:
-            self.stages.append(Stage(key, label, time.perf_counter() - t0, h.note, h._image))
+            self.stages.append(Stage(key, label, time.perf_counter() - t0, h.note, h._image, h.device))
             self.current = None
 
     def to_list(self, start: int = 0) -> List[dict]:
         out = []
         for s in list(self.stages)[start:]:
-            d = {"key": s.key, "label": s.label, "seconds": round(s.seconds, 3), "note": s.note, "image": None}
+            d = {"key": s.key, "label": s.label, "seconds": round(s.seconds, 3), "note": s.note, "device": s.device, "image": None}
             if s.image:
                 d["image"] = "data:image/jpeg;base64," + base64.b64encode(s.image).decode()
             out.append(d)
