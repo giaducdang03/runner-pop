@@ -50,14 +50,20 @@ def default_engine(names: List[str]) -> str:
     return names[0] if names else ""
 
 
-def _do_warmup() -> str:
-    """Làm nóng YOLO + engine cf (JIT numba) + engine mặc định trên ảnh giả. Có thể raise."""
+def _dummy_scene_person() -> Tuple[P.Scene, P.Person]:
+    """Cảnh giả (nạp YOLO) + box thủ công; dùng chung cho warm-up và /prepare."""
     h = w = 320
     yy, xx = np.mgrid[0:h, 0:w]
     rgb = np.stack([xx * 255 // w, yy * 255 // h, (xx + yy) * 255 // (h + w)], -1).astype(np.uint8)
     rgb[40:300, 100:220] = (200, 60, 40)                     # "người" giả để matting có việc làm
     scene = P.detect_scene(rgb, "none", C.YOLO_WEIGHTS)       # nạp YOLO (ảnh giả không có người thật)
     person = P.Person(idx=-1, box=(100, 40, 220, 300), conf=1.0, mask=None)   # box thủ công
+    return scene, person
+
+
+def _do_warmup() -> str:
+    """Làm nóng YOLO + engine cf (JIT numba) + engine mặc định trên ảnh giả. Có thể raise."""
+    scene, person = _dummy_scene_person()
     names = P.engine_names()
     engine = default_engine(names)
     todo = ["cf"] if "cf" in names else []
@@ -79,6 +85,50 @@ def warmup() -> None:
         _set_warmup("error", f"{type(e).__name__}: {e}"[:200])
 
 
+# --------------------------------------------------------------------------
+# Nạp model theo yêu cầu (E1): giao diện gọi /prepare khi người dùng chọn engine + thiết bị
+# --------------------------------------------------------------------------
+_PREPARE: Dict[Tuple[str, str], dict] = {}        # (engine, device_mode) -> {state, detail, used_device}
+_PREPARE_LOCK = threading.Lock()
+
+
+def _prepare_view(engine: str, device_mode: str) -> dict:
+    """Bản sao trạng thái của một cặp (engine, device); chưa từng yêu cầu -> idle. Gọi khi đang giữ _PREPARE_LOCK."""
+    st = _PREPARE.get((engine, device_mode)) or {"state": "idle", "detail": "", "used_device": ""}
+    return {"engine": engine, "device_mode": device_mode, **st}
+
+
+def _set_prepare(engine: str, device_mode: str, state: str, detail: str = "", used_device: str = "") -> None:
+    with _PREPARE_LOCK:       # thay nguyên dict -> đọc luôn thấy trạng thái nhất quán
+        _PREPARE[(engine, device_mode)] = {"state": state, "detail": detail, "used_device": used_device}
+
+
+def prepare_engine(engine: str, device_mode: str) -> str:
+    """Chạy build_cutout trên cảnh giả (không cache) để nạp / biên dịch model đúng như request thật.
+    Trả về nhãn thiết bị của bước nặng thực sự dùng ("" nếu không có). Có thể raise."""
+    scene, person = _dummy_scene_person()
+    cut = P.build_cutout(scene, person, engine, P.SegParams(device_mode=device_mode, cache=None))
+    stages = cut.trace.stages if getattr(cut, "trace", None) else []
+    for st in stages:
+        if st.device:
+            return st.device
+    return ""
+
+
+def _prepare_run(engine: str, device_mode: str) -> None:
+    """Thân thread nền: không bao giờ raise, lỗi chỉ đặt state = error."""
+    try:
+        used = prepare_engine(engine, device_mode)
+        _set_prepare(engine, device_mode, "done", "", used)
+    except BaseException as e:  # noqa: BLE001
+        _set_prepare(engine, device_mode, "error", f"{type(e).__name__}: {e}"[:200])
+
+
+def _check_prepare_args(engine: str) -> None:
+    if engine not in P.engine_names():
+        raise HTTPException(400, f"Engine '{engine}' không tồn tại. Hiện có: {', '.join(P.engine_names())}")
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     if C.WARMUP_ON_START:
@@ -88,6 +138,32 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Runner B&W Background", version="1.0", lifespan=lifespan)
+
+
+@app.post("/prepare")
+def prepare_post(engine: str = Query(..., description="Tên engine, xem GET /options"),
+                 device: str = Query("auto", pattern="^(auto|cpu|gpu)$", description="auto | cpu | gpu")):
+    """Bắt đầu nạp model ở thread nền (single-flight, idempotent). Trả về trạng thái hiện tại."""
+    _check_prepare_args(engine)
+    key = (engine, device)
+    with _PREPARE_LOCK:
+        cur = _PREPARE.get(key)
+        start = cur is None or cur["state"] == "error"      # running / done: không làm gì; error: thử lại
+        if start:
+            _PREPARE[key] = {"state": "running", "detail": "", "used_device": ""}
+        view = _prepare_view(engine, device)
+    if start:
+        threading.Thread(target=_prepare_run, args=key, daemon=True, name=f"prepare-{engine}-{device}").start()
+    return view
+
+
+@app.get("/prepare")
+def prepare_get(engine: str = Query(...),
+                device: str = Query("auto", pattern="^(auto|cpu|gpu)$")):
+    """Trạng thái nạp model của (engine, device). Không bao giờ chặn."""
+    _check_prepare_args(engine)
+    with _PREPARE_LOCK:
+        return _prepare_view(engine, device)
 
 
 # --------------------------------------------------------------------------

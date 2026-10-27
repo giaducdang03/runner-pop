@@ -17,7 +17,8 @@ import requests
 import streamlit as st
 import streamlit.components.v1 as components
 
-from ui_helpers import device_line, is_warming, pick_default_engine, should_auto_run, should_poll
+from ui_helpers import (device_line, engine_ready, is_warming, pick_default_engine, prepare_message,
+                        prepare_note, should_auto_run, should_poll, should_poll_prepare)
 
 API = os.environ.get("API_URL", "http://127.0.0.1:8000")
 
@@ -187,6 +188,26 @@ def warm_status():
         st.rerun()
 
 
+def prepare_state(engine: str, device_mode: str, post: bool = False) -> dict:
+    """POST (idempotent) hoặc GET /prepare. Lỗi mạng / thiếu endpoint -> {} (coi như không chặn)."""
+    try:
+        fn = requests.post if post else requests.get
+        r = fn(f"{API}/prepare", params={"engine": engine, "device": device_mode}, timeout=10)
+        return r.json() if r.status_code == 200 else {}
+    except Exception:
+        return {}
+
+
+@st.fragment(run_every=2)
+def prepare_status(engine: str, device_mode: str, label: str):
+    """Hiện thông báo đang nạp model và hỏi lại GET /prepare mỗi 2 s; hết "running" thì chạy lại cả script."""
+    state = prepare_state(engine, device_mode).get("state")
+    if should_poll_prepare(state):
+        st.info(prepare_message(label, device_mode))
+    else:
+        st.rerun()
+
+
 # ---------------------------------------------------------------- sidebar
 with st.sidebar:
     st.header("Cài đặt")
@@ -212,6 +233,15 @@ with st.sidebar:
                       help="Chỉ cho chế độ 'Mặt phẳng nét'. Tăng nếu giữ màu thừa cả vùng hơi mờ; giảm nếu mất vùng nét.")
     device = st.selectbox("Thiết bị", DEVICE_CHOICES,
                           help="auto: dùng GPU nếu có, không thì CPU. Gửi kèm mọi yêu cầu phát hiện / tách nền.")
+    prep = prepare_state(method, device, post=True)     # nạp model của (engine, thiết bị) đang chọn
+    prep_state = prep.get("state")
+    ready = engine_ready(prep_state)
+    if should_poll_prepare(prep_state):
+        prepare_status(method, device, ENGINE_LABELS[method])
+    elif prep_state == "error":
+        st.warning(f"Nạp model gặp lỗi: {prep.get('detail', '')}. Vẫn có thể thử xử lý.")
+    elif prep_state == "done" and prepare_note(device, prep.get("used_device", "")):
+        st.caption(prepare_note(device, prep.get("used_device", "")))
     st.caption(f"Backend: {API}")
     warming = False
     try:
@@ -231,7 +261,7 @@ with st.sidebar:
         st.error("Không kết nối được backend.\nChạy: uvicorn backend.main:app --port 8000")
 
 # ---------------------------------------------------------------- upload
-up = st.file_uploader("Tải ảnh người chạy", type=["jpg", "jpeg", "png", "webp"])
+up = st.file_uploader("Tải ảnh người chạy", type=["jpg", "jpeg", "png", "webp"], disabled=not ready)
 if up is None:
     st.info("Tải ảnh lên để bắt đầu.")
     st.stop()
@@ -292,11 +322,12 @@ with c2:
         y1, y2 = st.slider("y", 0, H, (int(H * 0.1), int(H * 0.9)))
         if use_manual:
             manual_box = f"{x1},{y1},{x2},{y2}"
-    go = st.button("Xử lý lại" if auto else "Xử lý", type="primary", use_container_width=True)
+    go = st.button("Xử lý lại" if auto else "Xử lý", type="primary", use_container_width=True,
+                   disabled=not ready)
 
 # Chế độ tự động: chạy 1 lần cho mỗi tổ hợp (người, engine, tham số) chưa xử lý.
 sig = (file_key, choice, manual_box, method, band, focus if method == "focus" else None, device)
-auto_run = should_auto_run(auto, bool(persons or manual_box), sig, st.session_state.get("auto_sig"), warming)
+auto_run = should_auto_run(auto, bool(persons or manual_box), sig, st.session_state.get("auto_sig"), warming, ready)
 if auto_run:
     st.session_state["auto_sig"] = sig          # đặt trước để lỗi không làm lặp vô hạn
 
