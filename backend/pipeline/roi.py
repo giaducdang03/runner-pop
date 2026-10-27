@@ -125,11 +125,14 @@ def _guide_gray(roi: Roi, guide_rgb_f: np.ndarray) -> np.ndarray:
 def upsample_alpha(alpha_work: np.ndarray, roi: Roi, guide_rgb_f: np.ndarray,
                    unknown_work: Optional[np.ndarray] = None) -> np.ndarray:
     """Nâng α từ độ phân giải làm việc về `full_shape`: resize tuyến tính, guided filter
-    theo ảnh gốc, chỉ nhận giá trị lọc trong dải chưa biết (ngoài dải giữ 0/1). Ngoài ROI = 0."""
+    theo ảnh gốc, chỉ nhận giá trị lọc trong dải chưa biết (ngoài dải giữ 0/1). Ngoài ROI = 0.
+    Nếu `alpha_work` đã đúng `roi.full_size` (scale 1) thì không lọc, chỉ dán."""
     size = roi.full_size
     a_up = alpha_work.astype(np.float32)
-    if a_up.shape[::-1] != size:
-        a_up = cv2.resize(a_up, size, interpolation=cv2.INTER_LINEAR)
+    if a_up.shape[::-1] == size:
+        # không nâng độ phân giải -> giữ nguyên kết quả matting, chỉ dán (R14)
+        return roi.paste(a_up, fill=0.0)
+    a_up = cv2.resize(a_up, size, interpolation=cv2.INTER_LINEAR)
     if unknown_work is not None:
         u = unknown_work.astype(np.float32)
         if u.shape[::-1] != size:
@@ -151,7 +154,8 @@ def upsample_rgb(rgb_work: np.ndarray, roi: Roi, guide_rgb_f: np.ndarray,
     up = rgb_work.astype(np.float32)
     if up.shape[1::-1] != size:
         up = cv2.resize(up, size, interpolation=cv2.INTER_LINEAR)
-    up = guided_filter(_guide_gray(roi, guide_rgb_f), up)
+        up = guided_filter(_guide_gray(roi, guide_rgb_f), up)
+    # cùng kích thước (scale 1) -> không lọc, chỉ dán (R14)
     out = base.astype(np.float32).copy()
     out[roi.y1:roi.y2, roi.x1:roi.x2] = up
     return out

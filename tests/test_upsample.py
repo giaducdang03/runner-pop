@@ -104,3 +104,53 @@ def test_upsample_rgb_keeps_base_outside_roi(make_scene):
     assert out.shape == (H, W, 3) and out.dtype == np.float32
     assert np.array_equal(out[0, 0], base[0, 0])
     assert abs(float(out[(roi.y1 + roi.y2) // 2, (roi.x1 + roi.x2) // 2, 0]) - 0.7) < 0.05
+
+
+def _soft_alpha(shape, seed=5):
+    """α có dải mềm (giá trị thực sự nằm giữa 0 và 1) ở giữa ảnh."""
+    h, w = shape
+    a = np.zeros((h, w), np.float32)
+    a[h // 4: 3 * h // 4, w // 4: 3 * w // 4] = 1.0
+    a = cv2.GaussianBlur(a, (0, 0), 6.0)
+    return np.clip(a + np.random.default_rng(seed).normal(0, 0.05, a.shape).astype(np.float32), 0, 1)
+
+
+def test_upsample_alpha_no_resize_only_pastes():   # R14
+    roi = Roi(100, 80, 300, 380, 1.0, (500, 600))
+    assert roi.work_size == roi.full_size
+    ww, wh = roi.work_size
+    alpha_work = _soft_alpha((wh, ww))
+    assert ((alpha_work > 0.05) & (alpha_work < 0.95)).sum() > 1000
+    guide = np.random.default_rng(6).random((500, 600, 3)).astype(np.float32)
+    a = upsample_alpha(alpha_work, roi, guide)
+    assert a.shape == (500, 600) and a.dtype == np.float32
+    assert np.array_equal(roi.crop(a), alpha_work)
+    outside = np.ones(a.shape, bool)
+    outside[roi.y1:roi.y2, roi.x1:roi.x2] = False
+    assert (a[outside] == 0.0).all()
+    # truyền dải unknown cũng không lọc
+    a2 = upsample_alpha(alpha_work, roi, guide, unknown_work=(alpha_work > 0.05))
+    assert np.array_equal(roi.crop(a2), alpha_work)
+
+
+def test_upsample_alpha_still_filters_when_downscaled(make_scene):   # R14: guard không tắt filter
+    roi, _, _ = _alpha_setup(make_scene)
+    assert roi.scale < 1.0
+    ww, wh = roi.work_size
+    alpha_work = _soft_alpha((wh, ww))
+    guide = np.random.default_rng(7).random((H, W, 3)).astype(np.float32)
+    a = upsample_alpha(alpha_work, roi, guide)
+    plain = cv2.resize(alpha_work, roi.full_size, interpolation=cv2.INTER_LINEAR)
+    assert not np.allclose(roi.crop(a), plain, atol=1e-3)
+
+
+def test_upsample_rgb_no_resize_only_pastes():   # R14
+    roi = Roi(100, 80, 300, 380, 1.0, (500, 600))
+    ww, wh = roi.work_size
+    rgb_work = np.random.default_rng(8).random((wh, ww, 3)).astype(np.float32)
+    guide = np.random.default_rng(9).random((500, 600, 3)).astype(np.float32)
+    base = np.random.default_rng(10).random((500, 600, 3)).astype(np.float32)
+    out = upsample_rgb(rgb_work, roi, guide, base)
+    assert out.dtype == np.float32 and out.shape == base.shape
+    assert np.array_equal(roi.crop(out), rgb_work)
+    assert np.array_equal(out[0, 0], base[0, 0])

@@ -150,3 +150,23 @@ def test_cutout_from_mask_signature(make_scene):
     mask_work = roi.to_work(scene.persons[0].mask)
     c = gc_mod.cutout_from_mask(to_float(scene.rgb), mask_work, roi, SegParams(), "cf")
     assert c.alpha.shape == scene.rgb.shape[:2]
+
+
+def test_scale1_alpha_equals_matting_output(monkeypatch, make_scene):   # R14
+    # ROI không thu nhỏ -> α trong ROI phải đúng bằng kết quả matting, không bị guided filter sửa
+    scene = _synthetic(make_scene, (240, 320), (120, 60, 190, 200))
+    roi = person_roi(scene, scene.persons[0])
+    assert roi.scale == 1.0
+    captured = {}
+    rng = np.random.default_rng(11)
+
+    def fake_matte(rgb_f, tri, method="cf"):
+        a = np.where(tri == 255, 1.0, 0.0).astype(np.float32)
+        band = tri == 128
+        a[band] = rng.uniform(0.05, 0.95, int(band.sum())).astype(np.float32)   # dải mềm "nhiễu"
+        captured["alpha"] = a
+        return a
+
+    monkeypatch.setattr(gc_mod, "matte", fake_matte)
+    c = build_cutout(scene, scene.persons[0], "cf")
+    assert np.array_equal(roi.crop(c.alpha), captured["alpha"])
