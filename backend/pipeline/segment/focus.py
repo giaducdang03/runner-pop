@@ -90,7 +90,9 @@ def focus_mask(rgb: np.ndarray, person: Person, init: np.ndarray,
 def run(scene: Scene, person: Person, params: SegParams) -> Cutout:
     """Toàn bộ focus_energy / focus_mask / GrabCut chạy trên ảnh ROI ở độ phân giải làm việc."""
     t = params.trace
-    roi = params.cached(("roi", person.idx, person.box), lambda: active_roi(scene, person))
+    # ROI của focus gộp mọi người trong ảnh (cùng mặt phẳng nét, FR-37) -> khoá cache riêng (R16)
+    roi = params.cached(("roi", person.idx, person.box, "all"),
+                        lambda: active_roi(scene, person, scope="all"))
     w, h = roi.work_size
     scene_w, person_w = work_scene(scene, person, roi)
     init = person_init_mask(scene_w, person_w)

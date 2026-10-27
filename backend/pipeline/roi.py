@@ -67,15 +67,17 @@ def _overlaps(a, b) -> bool:
 
 
 def person_roi(scene: Scene, person: Person, margin: float = C.ROI_MARGIN,
-               min_px: int = C.ROI_MIN_PX, max_side: int = C.WORK_MAX_SIDE) -> Roi:
+               min_px: int = C.ROI_MIN_PX, max_side: int = C.WORK_MAX_SIDE,
+               scope: str = "person") -> Roi:
     """ROI = box người nở `max(min_px, margin * cạnh dài)` mỗi phía, gộp box những người
-    khác có box chồng lên box người này, rồi cắt vào ảnh. Chỉ cần box (không cần mask)."""
+    khác có box chồng lên box người này, rồi cắt vào ảnh. Chỉ cần box (không cần mask).
+    `scope="all"` (engine focus, R16): gộp box của MỌI người phát hiện, không chỉ người chồng lên."""
     h, w = scene.rgb.shape[:2]
     bx1, by1, bx2, by2 = person.box
     pad = max(float(min_px), margin * max(bx2 - bx1, by2 - by1))
     x1, y1, x2, y2 = bx1 - pad, by1 - pad, bx2 + pad, by2 + pad
     for o in scene.others(person):
-        if _overlaps(person.box, o.box):
+        if scope == "all" or _overlaps(person.box, o.box):
             x1, y1 = min(x1, o.box[0]), min(y1, o.box[1])
             x2, y2 = max(x2, o.box[2]), max(y2, o.box[3])
     x1, y1 = max(0, math.floor(x1)), max(0, math.floor(y1))
@@ -94,11 +96,11 @@ def full_roi(shape, max_side: Optional[int] = None) -> Roi:
     return Roi(0, 0, w, h, scale, (h, w))
 
 
-def active_roi(scene: Scene, person: Person) -> Roi:
+def active_roi(scene: Scene, person: Person, scope: str = "person") -> Roi:
     """ROI mọi engine dùng: toàn ảnh khi FULLRES bật, ngược lại ROI quanh người."""
     if C.FULLRES:
         return full_roi(scene.rgb.shape)
-    return person_roi(scene, person)
+    return person_roi(scene, person, scope=scope)
 
 
 def guided_filter(guide: np.ndarray, src: np.ndarray, radius: int = C.GUIDED_RADIUS,

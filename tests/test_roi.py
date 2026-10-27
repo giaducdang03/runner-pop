@@ -67,3 +67,15 @@ def test_active_roi_switches_on_fullres(make_scene, monkeypatch):
     assert not active_roi(scene, scene.persons[0]).is_full
     monkeypatch.setattr(C, "FULLRES", True)
     assert active_roi(scene, scene.persons[0]).is_full
+
+
+def test_roi_scope_all_includes_far_person(make_scene):
+    """R16: scope="all" gộp cả người xa không chồng box; scope="person" thì không."""
+    scene = make_scene((240, 480), [((100, 60, 170, 200), None), ((380, 60, 450, 200), None)])
+    p = scene.persons[0]
+    near = person_roi(scene, p)
+    far = person_roi(scene, p, scope="all")
+    assert near.x2 < 380 and far.x2 >= 450 and far.x1 == near.x1
+    manual = Person(idx=-1, box=(100, 60, 170, 200), conf=1.0, mask=None)
+    assert person_roi(scene, manual, scope="all").x2 >= 450
+    assert active_roi(scene, p, scope="all") == far

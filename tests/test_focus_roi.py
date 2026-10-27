@@ -149,3 +149,53 @@ def test_roi_note_reads_roi_stage_or_dash():
     roi_stage(t, np.zeros((50, 60, 3), np.uint8), full_roi((50, 60)))
     assert roi_note(t.stages) == t.stages[0].note
     assert roi_note(None) == "-"
+
+
+# ---- R16: ROI của focus gộp mọi người ----
+
+def _two_people(make_scene, far_sharp=True):
+    h, w = 240, 480
+    ba, bb = (100, 60, 170, 200), (380, 60, 450, 200)
+    masks = []
+    for b in (ba, bb):
+        m = np.zeros((h, w), np.uint8)
+        m[b[1]:b[3], b[0]:b[2]] = 255
+        masks.append(m)
+    scene = make_scene((h, w), [(ba, masks[0]), (bb, masks[1])])
+    gx = np.linspace(60, 160, w, dtype=np.float32)[None, :]
+    rgb = np.stack([np.broadcast_to(gx, (h, w))] * 3, axis=-1).copy()
+    rng = np.random.default_rng(1)
+    for i, b in enumerate((ba, bb)):
+        patch = rng.integers(0, 255, (b[3] - b[1], b[2] - b[0], 3)).astype(np.float32)
+        if i == 1 and not far_sharp:
+            import cv2
+            patch = cv2.GaussianBlur(patch, (0, 0), 8)
+        rgb[b[1]:b[3], b[0]:b[2]] = patch
+    scene.rgb = np.clip(rgb, 0, 255).astype(np.uint8)
+    return scene, ba, bb
+
+
+def test_focus_keeps_far_sharp_person(make_scene):
+    scene, ba, bb = _two_people(make_scene)
+    c = build_cutout(scene, scene.persons[0], "focus")
+    assert c.alpha[130, 415] > 0.9 and c.alpha[130, 135] > 0.9
+    roi = focus_mod.active_roi(scene, scene.persons[0], scope="all")
+    assert roi.x1 <= bb[0] and roi.x2 >= bb[2]
+
+
+def test_focus_drops_far_blurred_person(make_scene):
+    scene, ba, bb = _two_people(make_scene, far_sharp=False)
+    c = build_cutout(scene, scene.persons[0], "focus")
+    assert c.alpha[130, 135] > 0.9
+    assert c.alpha[130, 415] < 0.1
+
+
+def test_cf_then_focus_do_not_share_stale_roi(make_scene):
+    scene, ba, bb = _two_people(make_scene)
+    p = scene.persons[0]
+    cache = StageCache()
+    c_cf = build_cutout(scene, p, "cf", SegParams(cache=cache))
+    c_fo = build_cutout(scene, p, "focus", SegParams(cache=cache))
+    assert cache.get_or(("roi", p.idx, p.box), lambda: None) == person_roi(scene, p)
+    assert cache.get_or(("roi", p.idx, p.box, "all"), lambda: None) == person_roi(scene, p, scope="all")
+    assert _roi_stage(c_cf).note != _roi_stage(c_fo).note
