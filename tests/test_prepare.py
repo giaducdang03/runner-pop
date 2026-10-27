@@ -170,3 +170,56 @@ def test_prepare_note():
     assert ui_helpers.prepare_note("gpu", "Intel GPU") == ""
     assert ui_helpers.prepare_note("auto", "CPU") == ""
     assert ui_helpers.prepare_note("gpu", "") == ""
+
+
+# ------------------------------------------------------------------ fix round 1 (R31)
+def test_should_post_prepare():
+    assert ui_helpers.should_post_prepare("idle") is True
+    for s in ("running", "done", "error", None, "", "weird"):
+        assert ui_helpers.should_post_prepare(s) is False
+
+
+def test_fragment_action():
+    assert ui_helpers.fragment_action("running") == "poll"
+    assert ui_helpers.fragment_action("idle") == "post"
+    for s in ("done", "error", None):
+        assert ui_helpers.fragment_action(s) == "rerun"
+
+
+def test_sidebar_prepare_plan():
+    assert ui_helpers.sidebar_prepare_plan("idle") == {"post": True, "ready": False, "show_error": False, "polling": True}
+    assert ui_helpers.sidebar_prepare_plan("running") == {"post": False, "ready": False, "show_error": False, "polling": True}
+    assert ui_helpers.sidebar_prepare_plan("done") == {"post": False, "ready": True, "show_error": False, "polling": False}
+    assert ui_helpers.sidebar_prepare_plan("error") == {"post": False, "ready": True, "show_error": True, "polling": False}
+    assert ui_helpers.sidebar_prepare_plan(None)["post"] is False and ui_helpers.sidebar_prepare_plan(None)["ready"]
+
+
+class _FakeBackend:
+    """Backend giả: POST trên idle / error bắt đầu một lần chạy; lần chạy luôn thất bại."""
+    def __init__(self):
+        self.state, self.runs = "idle", 0
+
+    def get(self):
+        return self.state
+
+    def post(self):
+        if self.state in ("idle", "error"):
+            self.runs += 1
+            self.state = "error"        # lỗi dai dẳng: chạy xong là error
+        return self.state
+
+
+def test_persistent_error_does_not_loop():
+    be = _FakeBackend()
+    for _ in range(6):                  # 6 lần chạy lại toàn bộ script
+        state = be.get()
+        plan = ui_helpers.sidebar_prepare_plan(state)
+        if plan["post"]:
+            state = be.post()
+        if plan["polling"]:             # fragment: vòng poll tới khi rời running
+            act = ui_helpers.fragment_action(be.get())
+            if act == "post":
+                be.post()
+    assert be.runs == 1
+    plan = ui_helpers.sidebar_prepare_plan(be.get())
+    assert plan["ready"] and plan["show_error"] and not plan["post"]

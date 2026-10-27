@@ -54,3 +54,24 @@ def prepare_note(device_mode: str, used_device: str) -> str:
     if device_mode == "gpu" and used_device.strip().upper().startswith("CPU"):
         return f"Đã dùng CPU thay vì GPU ({used_device})."
     return ""
+
+
+def should_post_prepare(state: Optional[str]) -> bool:
+    """Chỉ POST /prepare khi chưa từng yêu cầu (idle: lần đầu hoặc backend vừa khởi động lại).
+    running / done / error / None / lạ -> không POST (error chỉ được thử lại bằng nút bấm tường minh)."""
+    return state == "idle"
+
+
+def fragment_action(state: Optional[str]) -> str:
+    """Việc của fragment poll mỗi lượt: running -> poll tiếp; idle -> POST một lần rồi poll; còn lại -> rerun."""
+    if state == "running":
+        return "poll"
+    if state == "idle":
+        return "post"
+    return "rerun"
+
+
+def sidebar_prepare_plan(state: Optional[str]) -> dict:
+    """Quyết định của sidebar ở mỗi lần chạy script, dựa trên kết quả GET /prepare."""
+    return {"post": should_post_prepare(state), "ready": engine_ready(state),
+            "show_error": state == "error", "polling": should_poll_prepare(state)}
