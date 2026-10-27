@@ -6,7 +6,7 @@ from typing import Optional
 import cv2
 import numpy as np
 
-from .roi import Roi, upsample_alpha
+from .roi import Roi, upsample_alpha, upsample_rgb
 from .schema import Cutout
 from .trace import Trace
 
@@ -108,10 +108,16 @@ def finish_cutout(rgb_f: np.ndarray, alpha_work: np.ndarray, trimap_work: np.nda
         tri = cv2.resize(tri, roi.full_size, interpolation=cv2.INTER_NEAREST)
     trimap = roi.paste(tri.astype(np.uint8), fill=0)
     with (trace or Trace()).stage("decontaminate", "Khử nhiễm màu viền (ước lượng F / B)",
-                                  note="ảnh ≈ α·F + (1−α)·B") as s:
-        fg, bg = decontaminate(rgb_f, alpha)
-        fg = np.clip(fg, 0.0, 1.0).astype(np.float32)
-        bg = np.clip(bg, 0.0, 1.0).astype(np.float32)
+                                  note="ảnh ≈ α·F + (1−α)·B, tính ở độ phân giải làm việc") as s:
+        # khử nhiễm ở độ phân giải làm việc (FR-93), rồi nâng F/B bằng guided filter
+        rgb_work = roi.to_work(rgb_f)
+        fg_work, bg_work = decontaminate(rgb_work, alpha_work.astype(np.float32))
+        fg = np.clip(upsample_rgb(fg_work, roi, rgb_f, base=rgb_f), 0.0, 1.0).astype(np.float32)
+        bg = np.clip(upsample_rgb(bg_work, roi, rgb_f, base=rgb_f), 0.0, 1.0).astype(np.float32)
+        solid = alpha >= 1.0 - 1e-6
+        fg[solid] = rgb_f[solid]                 # α = 1 -> F chính là ảnh gốc
+        clear = alpha <= 0.0
+        bg[clear] = rgb_f[clear]                 # α = 0 (kể cả ngoài ROI) -> B là ảnh gốc
         a = alpha[..., None]
         s.show(a * fg + (1 - a) * 0.5)          # người tách khỏi nền, đặt trên nền xám
     return Cutout(image=rgb_f, alpha=alpha, foreground=fg, background=bg, trimap=trimap)
