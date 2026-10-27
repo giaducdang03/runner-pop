@@ -9,13 +9,16 @@ Thứ tự khoá (tránh deadlock): LUÔN lấy GPU_LOCK trước, rồi mới t
 """
 from __future__ import annotations
 
+import os
 import sys
 import threading
 import time
 from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+import numpy as np
 
 from . import config as C
 
@@ -253,3 +256,118 @@ def with_fallback(device: Device, gpu_fn: Callable[[], Any], cpu_fn: Callable[[]
             reason = str(e) or type(e).__name__
             stage.note = (getattr(stage, "note", "") or "") + f" · GPU lỗi, đã dùng CPU: {reason}"
         return cpu_fn(), _cpu_device()
+
+
+# --- nhớ lỗi build (R22): lỗi bền không bị thử lại ở mỗi request ----------------
+_FAIL_LOCK = threading.Lock()
+_BUILD_FAILED: Dict[str, float] = {}    # khoá -> thời điểm (monotonic) build lỗi gần nhất
+_clock = time.monotonic                 # test thay bằng đồng hồ giả
+
+
+def remember_failure(key: str) -> None:
+    with _FAIL_LOCK:
+        _BUILD_FAILED[key] = _clock()
+
+
+def failed_recently(key: str) -> bool:
+    """True nếu `key` build lỗi chưa quá C.ACCEL_EXPORT_RETRY_S giây."""
+    with _FAIL_LOCK:
+        t = _BUILD_FAILED.get(key)
+        if t is None:
+            return False
+        if _clock() - t < C.ACCEL_EXPORT_RETRY_S:
+            return True
+        del _BUILD_FAILED[key]
+        return False
+
+
+def forget_failures(key: Optional[str] = None) -> None:
+    """Xoá ghi nhớ lỗi của `key` (hoặc tất cả khi key=None)."""
+    with _FAIL_LOCK:
+        if key is None:
+            _BUILD_FAILED.clear()
+        else:
+            _BUILD_FAILED.pop(key, None)
+
+
+# --- runner ONNX đa backend (BiRefNet, RVM, MODNet) ---------------------------
+Runner = Callable[[Dict[str, np.ndarray]], List[np.ndarray]]
+
+# EP bắt buộc phải đứng đầu session khi chạy GPU qua onnxruntime (R19).
+_ORT_ACCEL_EP = {"cuda": "CUDAExecutionProvider", "mps": "CoreMLExecutionProvider"}
+
+
+def _runner_key(key: str, device: Device) -> str:
+    return f"{key}:{device.backend}:{device.index}"
+
+
+def onnx_runner_failed(key: str, device: Device) -> bool:
+    """True nếu runner `key` trên `device` vừa build lỗi (còn trong thời gian nhớ lỗi):
+    nơi gọi nên chạy thẳng đường CPU thay vì thử GPU rồi mới rơi về."""
+    return failed_recently(_runner_key(key, device))
+
+
+def _ov_convert(ov, onnx_path: str, static_input):
+    """Tách riêng để test bắt được đối số; `input` = {tên input: shape} cố định."""
+    if static_input:
+        return ov.convert_model(onnx_path, input=static_input)
+    return ov.convert_model(onnx_path)
+
+
+def _build_openvino(onnx_path: str, device: Device, static_input) -> Runner:
+    import openvino as ov
+
+    model = _ov_convert(ov, onnx_path, static_input)
+    cfg = {"CACHE_DIR": C.ACCEL_CACHE_DIR,
+           "INFERENCE_PRECISION_HINT": "f16" if device.dtype == "fp16" else "f32"}
+    cm = ov.Core().compile_model(model, device.ov_device_name, cfg)
+    outputs = list(cm.outputs)
+
+    def run(feeds: Dict[str, np.ndarray]) -> List[np.ndarray]:
+        res = cm(feeds)
+        return [np.asarray(res[o]) for o in outputs]
+    return run
+
+
+def _build_ort(onnx_path: str, device: Device) -> Runner:
+    import onnxruntime as ort
+
+    want = _ORT_ACCEL_EP.get(device.backend) if device.kind == "gpu" else None
+    if want is not None and want not in ort.get_available_providers():
+        raise RuntimeError(f"onnxruntime thiếu {want} (cần onnxruntime-gpu/CoreML)")
+    sess = ort.InferenceSession(onnx_path, providers=device.ort_providers)
+    if want is not None:
+        active = sess.get_providers()
+        if not active or active[0] != want:
+            # R19: không để model lặng lẽ chạy CPU trong khi Device báo GPU.
+            raise RuntimeError(f"session onnxruntime không chạy {want} (đang: {active})")
+
+    def run(feeds: Dict[str, np.ndarray]) -> List[np.ndarray]:
+        return list(sess.run(None, feeds))
+    return run
+
+
+def onnx_runner(key: str, onnx_path: str, device: Device,
+                static_input: Optional[Dict[str, Tuple[int, ...]]] = None) -> Runner:
+    """Runner cho model ONNX trên `device`: nhận {tên input: mảng}, trả list output theo
+    thứ tự của model. openvino: convert (shape tĩnh `static_input`) + compile trên GPU;
+    cuda/mps/cpu: onnxruntime với `device.ort_providers`. Cache qua `compiled()` theo
+    (key, backend, index). Build lỗi -> RuntimeError (để `with_fallback` về CPU) và lỗi
+    được nhớ C.ACCEL_EXPORT_RETRY_S giây (R22)."""
+    ck = _runner_key(key, device)
+    if failed_recently(ck):
+        raise RuntimeError(f"runner '{ck}' vừa build lỗi, chưa thử lại")
+
+    def build() -> Runner:
+        try:
+            if device.kind == "gpu" and device.backend == "openvino":
+                runner = _build_openvino(onnx_path, device, static_input)
+            else:
+                runner = _build_ort(onnx_path, device)
+        except Exception:
+            remember_failure(ck)
+            raise
+        forget_failures(ck)
+        return runner
+
+    return compiled(ck, build, nbytes=os.path.getsize(onnx_path))

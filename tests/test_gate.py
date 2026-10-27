@@ -81,7 +81,7 @@ def test_birefnet_engine_runs_on_roi_and_caches_alpha(monkeypatch, make_scene):
     assert not roi.is_full
     calls = []
 
-    def fake(rgb):
+    def fake(rgb, device=None, stage=None):
         calls.append(rgb.shape)
         a = np.zeros(rgb.shape[:2], np.float32)
         a[:] = 1.0                                   # "thấy" cả ROI; gate phải cắt lại
@@ -109,7 +109,7 @@ def test_birefnet_engine_pastes_alpha_at_exact_position(monkeypatch, make_scene)
     roi = person_roi(scene, person)
     assert roi.scale == 1.0
 
-    def fake(rgb):                                   # alpha đúng hình người (đỏ) trong ROI
+    def fake(rgb, device=None, stage=None):   # alpha đúng hình người (đỏ) trong ROI
         return (rgb[..., 0] > 200).astype(np.float32)
 
     monkeypatch.setattr(bf_mod, "birefnet_alpha", fake)
@@ -125,7 +125,7 @@ def test_birefnet_engine_gate_cuts_alpha_inside_roi(monkeypatch, make_scene):
     scene, box = _scene(make_scene)
     person = scene.persons[0]
     roi = person_roi(scene, person)
-    monkeypatch.setattr(bf_mod, "birefnet_alpha", lambda rgb: np.ones(rgb.shape[:2], np.float32))
+    monkeypatch.setattr(bf_mod, "birefnet_alpha", lambda rgb, *a, **k: np.ones(rgb.shape[:2], np.float32))
     c = build_cutout(scene, person, "birefnet", SegParams(cache=StageCache()))
     # góc ROI (xa người hơn vùng nở của gate) phải về 0 dù model trả toàn 1
     assert c.alpha[roi.y1, roi.x1] == 0.0 and c.alpha[roi.y2 - 1, roi.x2 - 1] == 0.0

@@ -133,7 +133,7 @@ def test_cf_trace_has_roi_stage_even_on_cache_hit(make_scene):
 
 def test_birefnet_trace_has_roi_stage(monkeypatch, make_scene):
     scene = _scene(make_scene)
-    monkeypatch.setattr(bf_mod, "birefnet_alpha", lambda rgb: np.ones(rgb.shape[:2], np.float32))
+    monkeypatch.setattr(bf_mod, "birefnet_alpha", lambda rgb, *a, **k: np.ones(rgb.shape[:2], np.float32))
     c = build_cutout(scene, scene.persons[0], "birefnet", SegParams(cache=StageCache()))
     st = _roi_stage(c)
     assert "làm việc" in st.note and st.image is not None
