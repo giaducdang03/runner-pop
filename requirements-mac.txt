@@ -1,0 +1,2 @@
+# Tuỳ chọn: chỉ cài trên Mac Apple Silicon (onnxruntime có CoreML EP). Thiếu gói thì backend này bị coi là không có.
+onnxruntime

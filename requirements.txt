@@ -14,3 +14,4 @@ rembg[cpu]   # BiRefNet qua onnxruntime (tải ~224 MB lần đầu)
 # torch CPU (Windows/Linux):  pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 torch
 torchvision
+onnx

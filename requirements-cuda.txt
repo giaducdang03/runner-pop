@@ -1,0 +1,4 @@
+# Tuỳ chọn: chỉ cài khi dùng GPU NVIDIA (CUDA). Thiếu gói thì backend này bị coi là không có.
+# Bản CUDA của torch cài từ PyTorch index URL, không phải từ PyPI, ví dụ:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+onnxruntime-gpu

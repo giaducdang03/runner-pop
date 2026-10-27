@@ -1,5 +1,6 @@
 """Hằng số cấu hình dùng chung. Mỗi nhóm bước có mục riêng để dễ chỉnh."""
 import os
+from pathlib import Path
 
 # Không cho ultralytics tự pip-install gói khi chạy (tránh thay đổi môi trường ngoài ý muốn)
 os.environ.setdefault("YOLO_AUTOINSTALL", "False")
@@ -32,3 +33,14 @@ WORK_MAX_SIDE = 640        # cạnh dài tối đa của ROI khi chạy engine (
 GUIDED_RADIUS = 8          # bán kính guided filter (px, ở độ phân giải làm việc)
 GUIDED_EPS = 1e-4          # eps của guided filter
 FULLRES = os.environ.get("FULLRES", "0") == "1"   # bật = bỏ ROI, chạy toàn ảnh gốc
+
+# --- gia tốc phần cứng (chọn bằng biến môi trường khi chạy app) ---------------
+ACCEL_DEVICE = os.environ.get("ACCEL_DEVICE", "auto")        # auto|cpu|gpu
+ACCEL_BACKEND = os.environ.get("ACCEL_BACKEND", "auto")      # auto|cpu|cuda|mps|openvino
+ACCEL_DEVICE_INDEX = int(os.environ.get("ACCEL_DEVICE_INDEX", "0"))   # chọn GPU khi có nhiều card
+ACCEL_DTYPE = os.environ.get("ACCEL_DTYPE", "auto")          # auto|fp16|fp32
+ACCEL_CACHE_DIR = os.environ.get(
+    "ACCEL_CACHE_DIR", str(Path.home() / ".cache" / "color_pop_runner"))
+ACCEL_MEM_BUDGET_MB = int(os.environ.get("ACCEL_MEM_BUDGET_MB", "3072"))   # ngân sách model nạp cùng lúc
+ACCEL_UNLOAD_IDLE = float(os.environ.get("ACCEL_UNLOAD_IDLE", "0"))        # giây; 0 = không giải phóng
+BIREFNET_SIZE = int(os.environ.get("BIREFNET_SIZE", "1024"))
