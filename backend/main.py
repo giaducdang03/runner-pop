@@ -34,7 +34,8 @@ MAX_UPLOAD_MB = 25
 # --------------------------------------------------------------------------
 # Warm-up (FR-106): nạp sẵn model ở thread nền, /health chỉ đọc trạng thái
 # --------------------------------------------------------------------------
-_WARMUP: Dict[str, str] = {"state": "idle", "detail": "not started"}   # idle | running | done | error
+_WARMUP_INITIAL: Dict[str, str] = {"state": "idle", "detail": "not started"}   # idle | running | done | error
+_WARMUP: Dict[str, str] = dict(_WARMUP_INITIAL)
 
 
 def _set_warmup(state: str, detail: str = "") -> None:

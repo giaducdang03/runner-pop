@@ -21,9 +21,9 @@ import ui_helpers  # noqa: E402
 @pytest.fixture(autouse=True)
 def _reset_warmup():
     """Trả _WARMUP về trạng thái ban đầu để các test không rò rỉ trạng thái cho nhau."""
-    main._set_warmup("idle", "not started")
+    main._set_warmup(**{"state": main._WARMUP_INITIAL["state"], "detail": main._WARMUP_INITIAL["detail"]})
     yield
-    main._set_warmup("idle", "not started")
+    main._set_warmup(**{"state": main._WARMUP_INITIAL["state"], "detail": main._WARMUP_INITIAL["detail"]})
 
 
 @pytest.fixture
@@ -166,11 +166,22 @@ def test_lifespan_goes_running_then_done(monkeypatch):
 
 
 def test_initial_warmup_state_is_idle():
-    assert main._WARMUP["state"] == "idle"
+    assert main._WARMUP_INITIAL["state"] == "idle"
+    assert main._WARMUP == main._WARMUP_INITIAL
+
+
+def test_fresh_import_warmup_state_is_idle():
+    """Import mới trong process riêng: không phụ thuộc fixture, bắt lỗi đổi trạng thái đầu về "running"."""
+    import subprocess
+    root = Path(__file__).resolve().parents[1]
+    out = subprocess.run([sys.executable, "-I", "-c",
+                          "import sys; sys.path.insert(0, r'%s'); import backend.main as m; print(m._WARMUP['state'])" % root],
+                         capture_output=True, text=True, timeout=120)
+    assert out.stdout.strip().splitlines()[-1] == "idle", out.stderr
 
 
 def test_ui_helpers_warming_states():
-    for s in ("idle", "done", "error", None):
+    for s in ("idle", "done", "error", "", None):
         assert not ui_helpers.is_warming(s) and not ui_helpers.should_poll(s)
     assert ui_helpers.is_warming("running") and ui_helpers.should_poll("running")
 
