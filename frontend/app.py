@@ -25,7 +25,7 @@ API = os.environ.get("API_URL", "http://127.0.0.1:8000")
 APP_TITLE = "RunnerPop – Image Preprocessing Optimization for AI-based Runner Segmentation"
 st.set_page_config(page_title=APP_TITLE, page_icon="🏃", layout="wide")
 st.title(APP_TITLE)
-st.caption("Giữ màu người chạy, đưa nền về đen trắng · YOLO-seg → tách nền → matting → ghép (chạy hoàn toàn trên CPU)")
+st.caption("Giữ màu người chạy, đưa nền về đen trắng · YOLO-seg → tách nền → matting → ghép (chạy trên CPU, hoặc GPU Intel / NVIDIA / Apple khi có)")
 
 
 def api_get(path, **kw):
