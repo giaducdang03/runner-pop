@@ -84,6 +84,20 @@ backend/
 - **Khi không phát hiện được người** (`preprocess=auto`): `detect.py` thử lại theo `DETECT_ATTEMPTS`
   (conf thấp hơn, imgsz lớn hơn, chuỗi `FALLBACK_PREPROCESS` mạnh hơn).
 
+## Công cụ đo (tools/)
+
+Tập ảnh nghiệm thu chuẩn: `../dataset/hd_bank_green_marathon_2026_resized`, lấy 30 ảnh đầu theo thứ tự tên đã sắp xếp. Chạy từ thư mục này:
+
+```powershell
+# thời gian từng stage (trung vị + p95), 10 lần bỏ 2 lần đầu — phương pháp mục 5.7; thêm --fullres để so với không ROI
+.venv\Scripts\python.exe tools/bench.py --dir ../dataset/hd_bank_green_marathon_2026_resized --limit 30 --engine cf,knn,birefnet,focus --runs 10 --drop 2
+# chất lượng so với FULLRES=1 (cũng có --ref-engine <tên> hoặc --ref-device cpu): mean IoU, mean SAD, p05 IoU, thời gian tương đối
+.venv\Scripts\python.exe tools/eval_quality.py --dir ../dataset/hd_bank_green_marathon_2026_resized --limit 30 --engine cf --ref-fullres
+```
+
+`FULLRES` được đọc từ môi trường một lần lúc import, nên công cụ đảo `config.FULLRES` ngay trong tiến trình (`active_roi` đọc lại mỗi lần gọi).
+Engine thiếu trọng số (vd. `birefnet`) in `NOT RUN: ...`. Số đo thật nằm ở mục 5.7 của `docs/SRS-addendum-v1.1.md`.
+
 ## Giới hạn đã biết
 
 - Chất lượng viền phụ thuộc mask GrabCut: matting chỉ sửa được lỗi nằm **trong dải unknown** (mặc định 2% kích thước người).

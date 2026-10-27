@@ -114,12 +114,22 @@ màu quanh chân giảm.
 | ID | Bước | CPU (hiện tại) | GPU tích hợp Intel Arc (mục tiêu) |
 |---|---|---|---|
 | NFR-60 | Phát hiện YOLOv8s-seg | ≈ 3 s | ≤ 0.6 s |
-| NFR-61 | Tách nền `cf`/`knn` (có ROI + upsample) | ≈ 1.5–3 s → ≤ 1 s | ≤ 1 s (matting vẫn trên CPU) |
-| NFR-62 | Tách nền `birefnet` (ROI) | ≈ 25 s → ≤ 10 s | ≤ 5 s |
+| NFR-61 | Tách nền `cf`/`knn` (có ROI + upsample) | ≈ 1.5–3 s → ≤ 1 s. **Đo thật (CPU, bản rút gọn):** `cf` 0.70 s, `knn` 1.01 s (ROI); `FULLRES=1`: `cf` 0.64 s, `knn` 1.17 s. Trung vị, 5 ảnh đầu × 4 lần bỏ 1, Intel64 Family 6 Model 170 (22 luồng). Xem ghi chú dưới bảng | ≤ 1 s (matting vẫn trên CPU) |
+| NFR-62 | Tách nền `birefnet` (ROI) | ≈ 25 s → ≤ 10 s. NOT RUN: weights not available | ≤ 5 s |
 | NFR-63 | Tách nền `rvm`/`modnet` | ≤ 2 s | ≤ 0.8 s |
 | NFR-64 | Bản đồ nét `freq` | ≤ 150 ms | ≤ 150 ms (CPU) |
 | NFR-65 | Khởi động + warm-up | ≤ 60 s lần đầu (kể cả xuất/biên dịch model), ≤ 20 s các lần sau nhờ cache | – |
 | NFR-66 | Bộ nhớ model nạp cùng lúc | ≤ 3 GB | ≤ 3 GB (dùng chung RAM hệ thống) |
+
+**Số đo Phase A (CPU, thật):** máy Intel64 Family 6 Model 170, 22 luồng; ảnh `dataset/hd_bank_green_marathon_2026_resized`
+(1600×1067, resize xuống 1280 px), engine `cf`, so `FULLRES=1`.
+- Chất lượng (`tools/eval_quality.py --limit 30 --engine cf --ref-fullres`, **30 ảnh**): mean IoU 0.9858, p05 IoU 0.9372,
+  min IoU 0.9044, mean SAD 914.3 (= 2.02% tổng α tham chiếu). Đạt ngưỡng IoU ≥ 0.98.
+- Thời gian cùng lần chạy: ROI 0.775 s so với FULLRES 1.025 s (trung bình) → nhanh hơn 1.32× (trung vị 1.38×). **Chưa đạt** mục tiêu ≥ 2×
+  (ảnh nghiệm thu chụp người chiếm phần lớn khung hình nên ROI gần bằng cả ảnh; các stage `decontaminate`, `compose` không giảm theo ROI).
+- `tools/bench.py` bản **rút gọn** (`--limit 5 --runs 4 --drop 1`, không phải 10 lần bỏ 2): tổng trung vị `cf` 0.699 s (p95 0.823) ROI / 0.644 s (p95 0.670) FULLRES;
+  `knn` 1.008 s (p95 1.463) / 1.165 s (p95 1.333); `focus` 1.448 s (p95 1.735) / 6.266 s (p95 10.913).
+- `birefnet`, YOLO (NFR-60), `rvm`/`modnet`, `freq`: NOT RUN (chưa có trọng số / chưa có engine / không nằm trong bench engine).
 
 **Phương pháp đo:** dùng trace hiện có, mỗi cấu hình chạy 10 lần bỏ 2 lần đầu, báo cáo **trung vị và
 p95**; bảng kết quả đưa vào báo cáo đồ án và lấp phần "chưa có đánh giá định lượng" ở mục 7.1 (thêm
