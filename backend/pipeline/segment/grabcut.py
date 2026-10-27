@@ -9,6 +9,7 @@ import numpy as np
 from ..masks import fill_small_holes, keep_components_overlapping
 from ..matting import finish_cutout, make_trimap, matte
 from ..occlusion import exclusion_mask
+from ..roi import Roi, active_roi
 from ..schema import Cutout, Person, Scene, SegParams
 from .base import ENGINES, person_init_mask, to_float
 
@@ -75,35 +76,81 @@ def refine_mask_grabcut(rgb: np.ndarray, init_mask: np.ndarray,
     return fill_small_holes(out, max_hole_frac=0.002)
 
 
-def cutout_from_mask(rgb: np.ndarray, mask: np.ndarray, params: SegParams, method: str) -> Cutout:
-    """mask -> trimap -> matting -> khử nhiễm màu. Dùng chung cho các engine dựa trên mask."""
+def cutout_from_mask(rgb_f: np.ndarray, mask_work: np.ndarray, roi: Roi,
+                     params: SegParams, method: str) -> Cutout:
+    """mask -> trimap -> matting -> khử nhiễm màu. Dùng chung cho các engine dựa trên mask.
+    `rgb_f`: ảnh ĐẦY ĐỦ float32 0..1; `mask_work`: mask uint8 ở `roi.work_size`.
+    Trimap + matting chạy ở độ phân giải làm việc, `finish_cutout` nâng về ảnh đầy đủ."""
     t = params.trace
     with t.stage("trimap", "Trimap (FG chắc chắn / vùng chưa biết / BG)",
                  note=f"vùng chưa biết ≈ {params.band_frac:.1%} kích thước người") as s:
-        tri = make_trimap(mask, band_frac=params.band_frac)
+        tri = make_trimap(mask_work, band_frac=params.band_frac)
         s.show(tri)
-    rgb_f = to_float(rgb)
+    rgb_work = np.ascontiguousarray(roi.to_work(rgb_f), dtype=np.float32)
+    w, h = roi.work_size
     with t.stage("matting", "Alpha matting",
-                 note="closed-form (pymatting)" if method == "cf" else "KNN (pymatting)") as s:
-        alpha = matte(rgb_f, tri, method=method)
+                 note=("closed-form (pymatting)" if method == "cf" else "KNN (pymatting)")
+                 + f", ROI {w}×{h}") as s:
+        alpha = matte(rgb_work, tri, method=method)
         s.show(alpha)
-    return finish_cutout(rgb_f, alpha, tri, t)
+    return finish_cutout(rgb_f, alpha, tri, roi, t)
+
+
+def _box_to_work(box: Tuple[int, int, int, int], roi: Roi) -> Tuple[int, int, int, int]:
+    """Đổi box từ toạ độ ảnh đầy đủ sang hệ ROI ở độ phân giải làm việc (cắt vào ROI)."""
+    ww, wh = roi.work_size
+    x1, y1, x2, y2 = box
+
+    def conv(v, o, hi):
+        return int(min(hi, max(0, round((v - o) * roi.scale))))
+
+    return (conv(x1, roi.x1, ww), conv(y1, roi.y1, wh), conv(x2, roi.x1, ww), conv(y2, roi.y1, wh))
+
+
+def _work_scene(scene: Scene, person: Person, roi: Roi) -> Tuple[Scene, Person]:
+    """Scene thu về ROI làm việc: ảnh INTER_AREA, mask mọi người INTER_NEAREST, box đổi toạ độ.
+    Dùng để tính mask khởi tạo và vùng loại trừ người khác (FR-37) ngay ở độ phân giải làm việc."""
+    def conv(p: Person) -> Person:
+        m = None if p.mask is None else roi.to_work(p.mask, cv2.INTER_NEAREST)
+        return Person(idx=p.idx, box=_box_to_work(p.box, roi), conf=p.conf, mask=m)
+
+    person_w = conv(person)
+    persons_w = [person_w if p is person else conv(p) for p in scene.persons]
+    if not any(p is person_w for p in persons_w):   # box thủ công không nằm trong scene.persons
+        persons_w.append(person_w)
+    return Scene(rgb=roi.to_work(scene.rgb), persons=persons_w), person_w
 
 
 def _make_engine(method: str):
     def run(scene: Scene, person: Person, params: SegParams) -> Cutout:
         t = params.trace
-        init = person_init_mask(scene, person)
-        with t.stage("init_mask", "Mask ban đầu từ YOLO-seg") as s:
-            s.overlay(scene.rgb, init)
-        with t.stage("occlusion", "Loại phần của người khác (thứ tự trước/sau theo vị trí chân)",
-                     note=f"{len(scene.others(person))} người khác") as s:
-            excl = exclusion_mask(scene, person, init)
-            s.overlay(scene.rgb, excl.astype(np.uint8) * 255, color=(235, 60, 60))
-        with t.stage("grabcut", "GrabCut tinh chỉnh biên", note="khởi tạo từ mask YOLO, 4 vòng") as s:
-            mask = refine_mask_grabcut(scene.rgb, init, person.box, exclude=excl)
-            s.overlay(scene.rgb, mask)
-        return cutout_from_mask(scene.rgb, mask, params, method)
+        roi = params.cached(("roi", person.idx, person.box), lambda: active_roi(scene, person))
+        w, h = roi.work_size
+
+        built = []
+
+        def build_mask() -> np.ndarray:
+            built.append(True)
+            scene_w, person_w = _work_scene(scene, person, roi)
+            init = person_init_mask(scene_w, person_w)
+            with t.stage("init_mask", "Mask ban đầu từ YOLO-seg",
+                         note=f"ROI {w}×{h} (scale {roi.scale:.2f})") as s:
+                s.overlay(scene_w.rgb, init)
+            with t.stage("occlusion", "Loại phần của người khác (thứ tự trước/sau theo vị trí chân)",
+                         note=f"{len(scene.others(person))} người khác") as s:
+                excl = exclusion_mask(scene_w, person_w, init)
+                s.overlay(scene_w.rgb, excl.astype(np.uint8) * 255, color=(235, 60, 60))
+            with t.stage("grabcut", "GrabCut tinh chỉnh biên", note="khởi tạo từ mask YOLO, 4 vòng") as s:
+                mask = refine_mask_grabcut(scene_w.rgb, init, person_w.box, exclude=excl)
+                s.overlay(scene_w.rgb, mask)
+            return mask
+
+        # mask GrabCut không phụ thuộc band_frac -> đổi band chỉ tính lại từ trimap (FR-94)
+        mask_work = params.cached(("gcmask", person.idx, person.box), build_mask)
+        if not built:   # lấy từ cache: vẫn ghi một bước để sơ đồ pipeline đủ bước
+            with t.stage("grabcut", "GrabCut tinh chỉnh biên", note="dùng lại mask đã tính (cache)") as s:
+                s.overlay(roi.to_work(scene.rgb), mask_work)
+        return cutout_from_mask(to_float(scene.rgb), mask_work, roi, params, method)
     return run
 
 

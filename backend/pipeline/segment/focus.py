@@ -11,7 +11,8 @@ import numpy as np
 
 from ..masks import fill_small_holes, mask_bbox
 from ..schema import Cutout, Person, Scene, SegParams
-from .base import ENGINES, person_init_mask
+from ..roi import full_roi
+from .base import ENGINES, person_init_mask, to_float
 from .grabcut import cutout_from_mask, refine_mask_grabcut
 
 
@@ -96,4 +97,5 @@ def run(scene: Scene, person: Person, params: SegParams) -> Cutout:
     with t.stage("grabcut", "GrabCut tinh chỉnh biên", note="khởi tạo từ mặt phẳng nét") as s:
         mask = refine_mask_grabcut(scene.rgb, fm, mask_bbox(fm))
         s.overlay(scene.rgb, mask)
-    return cutout_from_mask(scene.rgb, mask, params, "cf")
+    # Task A7 sẽ chuyển sang ROI thật; tạm thời xử lý toàn ảnh ở độ phân giải gốc
+    return cutout_from_mask(to_float(scene.rgb), mask, full_roi(scene.rgb.shape), params, "cf")

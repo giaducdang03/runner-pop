@@ -6,6 +6,7 @@ from typing import Optional
 import cv2
 import numpy as np
 
+from .roi import Roi, upsample_alpha
 from .schema import Cutout
 from .trace import Trace
 
@@ -94,12 +95,23 @@ def decontaminate(rgb_f: np.ndarray, alpha: np.ndarray):
     return fg, bg
 
 
-def finish_cutout(rgb_f: np.ndarray, alpha: np.ndarray, trimap: np.ndarray,
-                  trace: Optional[Trace] = None) -> Cutout:
-    """Bước cuối chung của mọi engine: khử nhiễm màu + đóng gói."""
+def finish_cutout(rgb_f: np.ndarray, alpha_work: np.ndarray, trimap_work: np.ndarray,
+                  roi: Roi, trace: Optional[Trace] = None) -> Cutout:
+    """Bước cuối chung của mọi engine: nâng α/trimap từ độ phân giải làm việc của `roi`
+    về ảnh đầy đủ, khử nhiễm màu + đóng gói.
+    `rgb_f`: ảnh ĐẦY ĐỦ float32 0..1; `alpha_work`, `trimap_work`: kích thước `roi.work_size`.
+    Ngoài ROI: α = 0, trimap = 0, B = ảnh gốc (FR-90, FR-36)."""
+    alpha = np.clip(upsample_alpha(alpha_work, roi, rgb_f, unknown_work=(trimap_work == 128)),
+                    0.0, 1.0)
+    tri = trimap_work
+    if tri.shape[::-1] != roi.full_size:
+        tri = cv2.resize(tri, roi.full_size, interpolation=cv2.INTER_NEAREST)
+    trimap = roi.paste(tri.astype(np.uint8), fill=0)
     with (trace or Trace()).stage("decontaminate", "Khử nhiễm màu viền (ước lượng F / B)",
                                   note="ảnh ≈ α·F + (1−α)·B") as s:
         fg, bg = decontaminate(rgb_f, alpha)
+        fg = np.clip(fg, 0.0, 1.0).astype(np.float32)
+        bg = np.clip(bg, 0.0, 1.0).astype(np.float32)
         a = alpha[..., None]
         s.show(a * fg + (1 - a) * 0.5)          # người tách khỏi nền, đặt trên nền xám
     return Cutout(image=rgb_f, alpha=alpha, foreground=fg, background=bg, trimap=trimap)

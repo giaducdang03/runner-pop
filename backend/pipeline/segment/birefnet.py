@@ -8,6 +8,7 @@ from .. import config as C
 from ..masks import keep_components_overlapping
 from ..matting import finish_cutout
 from ..occlusion import exclusion_mask
+from ..roi import full_roi
 from ..schema import Cutout, Person, Scene, SegParams
 from .base import ENGINES, person_init_mask, to_float
 
@@ -63,4 +64,5 @@ def run(scene: Scene, person: Person, params: SegParams) -> Cutout:
         s.show(alpha)
 
     tri = np.where(alpha > 0.99, 255, np.where(alpha < 0.01, 0, 128)).astype(np.uint8)
-    return finish_cutout(rgb_f, alpha, tri, t)
+    # Task A6 sẽ chuyển sang ROI thật; tạm thời xử lý toàn ảnh ở độ phân giải gốc
+    return finish_cutout(rgb_f, alpha, tri, full_roi(scene.rgb.shape), t)
