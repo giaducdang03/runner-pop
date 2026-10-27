@@ -17,6 +17,8 @@ import requests
 import streamlit as st
 import streamlit.components.v1 as components
 
+from ui_helpers import device_line, pick_default_engine, should_auto_run
+
 API = os.environ.get("API_URL", "http://127.0.0.1:8000")
 
 st.set_page_config(page_title="Color Pop Runner", page_icon="🏃", layout="wide")
@@ -49,7 +51,8 @@ def load_options():
 OPTS = load_options()
 ENGINE_LABELS = {e["name"]: e["label"] for e in OPTS["engines"]}
 PRE_LABELS = {p["name"]: p["label"] for p in OPTS["preprocess"]}
-ENGINE_DEFAULT = "birefnet" if "birefnet" in ENGINE_LABELS else next(iter(ENGINE_LABELS))
+ENGINE_DEFAULT = pick_default_engine(OPTS, list(ENGINE_LABELS))
+DEVICE_CHOICES = OPTS.get("devices") or ["auto", "cpu", "gpu"]
 
 PIPELINE_TMPL = """
 <style>
@@ -194,10 +197,23 @@ with st.sidebar:
                      help="Tăng nếu có tóc/vải mỏng bị cắt; giảm nếu viền còn dính nền.")
     focus = st.slider("Ngưỡng độ nét", 0.1, 1.0, 0.3, 0.05, disabled=method != "focus",
                       help="Chỉ cho chế độ 'Mặt phẳng nét'. Tăng nếu giữ màu thừa cả vùng hơi mờ; giảm nếu mất vùng nét.")
+    device = st.selectbox("Thiết bị", DEVICE_CHOICES,
+                          help="auto: dùng GPU nếu có, không thì CPU. Gửi kèm mọi yêu cầu phát hiện / tách nền.")
     st.caption(f"Backend: {API}")
+    warming = False
     try:
         h = api_get("/health").json()
         st.success("Backend OK" + ("" if h["yolo_available"] else " – chưa có ultralytics"))
+        if h.get("device"):
+            st.caption(device_line(h["device"]))
+            avail = h.get("available_backends") or {}
+            st.caption("Backend khả dụng: " + (", ".join(f"{k} ({v})" for k, v in avail.items()) or "chỉ CPU"))
+            st.caption("Đổi backend cần khởi động lại backend với biến môi trường ACCEL_BACKEND.")
+        warming = h.get("warmup") == "running"
+        if warming:
+            st.info("Đang chuẩn bị model…")
+        elif h.get("warmup") == "error":
+            st.warning(f"Chuẩn bị model lỗi, lần chạy đầu sẽ chậm: {h.get('warmup_detail', '')}")
     except Exception:
         st.error("Không kết nối được backend.\nChạy: uvicorn backend.main:app --port 8000")
 
@@ -211,7 +227,7 @@ file_key = f"{up.name}-{up.size}-{pre_spec}"
 if st.session_state.get("file_key") != file_key:
     st.session_state.clear()
     st.session_state["file_key"] = file_key
-    r = requests.post(f"{API}/detect", params={"preprocess": pre_spec, "background": "true"},
+    r = requests.post(f"{API}/detect", params={"preprocess": pre_spec, "device": device, "background": "true"},
                       files={"file": (up.name, up.getvalue(), up.type)}, timeout=300)
     if r.status_code != 200:
         st.error(err_msg(r))
@@ -266,13 +282,13 @@ with c2:
     go = st.button("Xử lý lại" if auto else "Xử lý", type="primary", use_container_width=True)
 
 # Chế độ tự động: chạy 1 lần cho mỗi tổ hợp (người, engine, tham số) chưa xử lý.
-sig = (file_key, choice, manual_box, method, band, focus if method == "focus" else None)
-auto_run = auto and (persons or manual_box) and st.session_state.get("auto_sig") != sig
+sig = (file_key, choice, manual_box, method, band, focus if method == "focus" else None, device)
+auto_run = should_auto_run(auto, bool(persons or manual_box), sig, st.session_state.get("auto_sig"), warming)
 if auto_run:
     st.session_state["auto_sig"] = sig          # đặt trước để lỗi không làm lặp vô hạn
 
 if go or auto_run:
-    params = {"person": choice, "method": method, "band": band, "focus": focus}
+    params = {"person": choice, "method": method, "band": band, "focus": focus, "device": device}
     if manual_box:
         params["box"] = manual_box
     r = requests.post(f"{API}/process/{sid}", params={**params, "background": "true"}, timeout=60)

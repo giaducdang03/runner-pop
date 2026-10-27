@@ -12,6 +12,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Dict, List, Literal, Optional, Tuple
 
@@ -22,6 +23,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from . import pipeline as P
+from .pipeline import accel
 from .report import build_report
 from .pipeline import config as C
 from .pipeline.cache import StageCache
@@ -29,7 +31,60 @@ from .pipeline.cache import StageCache
 MAX_SESSIONS = int(os.environ.get("MAX_SESSIONS", "8"))
 MAX_UPLOAD_MB = 25
 
-app = FastAPI(title="Runner B&W Background", version="1.0")
+# --------------------------------------------------------------------------
+# Warm-up (FR-106): nạp sẵn model ở thread nền, /health chỉ đọc trạng thái
+# --------------------------------------------------------------------------
+_WARMUP: Dict[str, str] = {"state": "running", "detail": ""}   # running | done | error
+
+
+def _set_warmup(state: str, detail: str = "") -> None:
+    _WARMUP["state"], _WARMUP["detail"] = state, detail
+
+
+def default_engine(names: List[str]) -> str:
+    """Engine nhẹ chọn sẵn: rvm > modnet > cf, không có thì engine đầu tiên."""
+    for n in ("rvm", "modnet", "cf"):
+        if n in names:
+            return n
+    return names[0] if names else ""
+
+
+def _do_warmup() -> str:
+    """Làm nóng YOLO + engine cf (JIT numba) + engine mặc định trên ảnh giả. Có thể raise."""
+    h = w = 320
+    yy, xx = np.mgrid[0:h, 0:w]
+    rgb = np.stack([xx * 255 // w, yy * 255 // h, (xx + yy) * 255 // (h + w)], -1).astype(np.uint8)
+    rgb[40:300, 100:220] = (200, 60, 40)                     # "người" giả để matting có việc làm
+    scene = P.detect_scene(rgb, "none", C.YOLO_WEIGHTS)       # nạp YOLO (ảnh giả không có người thật)
+    person = P.Person(idx=-1, box=(100, 40, 220, 300), conf=1.0, mask=None)   # box thủ công
+    names = P.engine_names()
+    engine = default_engine(names)
+    todo = ["cf"] if "cf" in names else []
+    if engine and engine not in todo:
+        todo.append(engine)
+    for m in todo:
+        P.build_cutout(scene, person, m, P.SegParams(device_mode="auto"))
+    return "engines: " + ", ".join(todo)
+
+
+def warmup() -> None:
+    """Chạy trong thread; không bao giờ raise - lỗi chỉ làm state = error (app vẫn dùng được, nhưng nguội)."""
+    if not C.WARMUP_ON_START:
+        _set_warmup("done", "disabled")
+        return
+    try:
+        _set_warmup("done", _do_warmup())
+    except Exception as e:  # noqa: BLE001
+        _set_warmup("error", f"{type(e).__name__}: {e}"[:200])
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    threading.Thread(target=warmup, daemon=True, name="warmup").start()
+    yield
+
+
+app = FastAPI(title="Runner B&W Background", version="1.0", lifespan=lifespan)
 
 
 # --------------------------------------------------------------------------
@@ -131,13 +186,19 @@ def health():
         yolo = True
     except Exception:
         yolo = False
-    return {"ok": True, "yolo_available": yolo, "weights": C.YOLO_WEIGHTS}
+    dev = accel.resolve()
+    return {"ok": True, "yolo_available": yolo, "weights": C.YOLO_WEIGHTS,
+            "device": dev.to_dict(), "backend": dev.backend,
+            "available_backends": accel.available_backends(),
+            "warmup": _WARMUP["state"], "warmup_detail": _WARMUP["detail"]}
 
 
 @app.get("/options")
 def options():
     """Danh sách bước có thể chọn - frontend dựng giao diện từ đây nên thêm bước mới không cần sửa UI."""
-    return {"engines": P.available_engines(), "preprocess": P.available_preprocess()}
+    return {"engines": P.available_engines(), "preprocess": P.available_preprocess(),
+            "device": accel.resolve().to_dict(), "devices": ["auto", "cpu", "gpu"],
+            "default_engine": default_engine(P.engine_names())}
 
 
 def _read_upload(file: UploadFile) -> np.ndarray:
@@ -178,6 +239,7 @@ def _run_job(job: Job, fn) -> None:
 @app.post("/detect", response_model=None)
 def detect(file: UploadFile = File(...),
            preprocess: str = Query("auto", description="auto | none | danh sách bước, vd: gamma,clahe"),
+           device: str = Query("auto", pattern="^(auto|cpu|gpu)$", description="auto | cpu | gpu"),
            background: bool = Query(False, description="true = trả về ngay, theo dõi tại /session/{id}/job/detect")):
     rgb = _read_upload(file)
     sid = uuid.uuid4().hex[:12]
@@ -187,7 +249,8 @@ def detect(file: UploadFile = File(...),
 
     def work() -> dict:
         s.cache.clear()
-        s.scene = P.detect_scene(rgb, preprocess, C.YOLO_WEIGHTS, trace=job.trace)
+        s.scene = P.detect_scene(rgb, preprocess, C.YOLO_WEIGHTS, trace=job.trace,
+                                 device_mode=device)
         return _detect_out(sid, s.scene).model_dump()
 
     if background:
@@ -252,6 +315,7 @@ def process(
     band: float = Query(0.02, ge=0.005, le=0.08, description="Bề rộng vùng unknown / kích thước người"),
     box: Optional[str] = Query(None, description="x1,y1,x2,y2 - dùng khi YOLO không phát hiện được"),
     focus: float = Query(0.3, ge=0.1, le=1.0, description="Ngưỡng độ nét so với người được chọn (method=focus)"),
+    device: str = Query("auto", pattern="^(auto|cpu|gpu)$", description="auto | cpu | gpu"),
     background: bool = Query(False, description="true = trả về ngay, theo dõi tại /session/{id}/job/segment"),
 ):
     s = _get(sid)
@@ -284,7 +348,7 @@ def process(
         t0 = time.time()
         s.cutout = P.build_cutout(s.scene, chosen, method,
                                   P.SegParams(band_frac=band, focus_frac=focus,
-                                              cache=s.cache, device_mode="auto"), trace=job.trace)
+                                              cache=s.cache, device_mode=device), trace=job.trace)
         s.meta = {"method": method, "band": band, "focus": focus, "person": chosen.idx}
         return ProcessOut(
             session_id=sid, person=chosen.idx, method=method,
