@@ -1,0 +1,106 @@
+"""Test độ phân giải làm việc, guided filter và nâng α về độ phân giải gốc (FR-91, FR-92)."""
+from __future__ import annotations
+
+import cv2
+import numpy as np
+
+from backend.pipeline.roi import Roi, guided_filter, person_roi, upsample_alpha, upsample_rgb
+
+H, W = 1000, 1400
+
+
+def _big_roi(make_scene):
+    scene = make_scene((H, W), [((300, 100, 1100, 900), None)])
+    return person_roi(scene, scene.persons[0])
+
+
+def test_work_side_capped_at_640(make_scene):
+    roi = _big_roi(make_scene)
+    assert max(roi.work_size) == 640
+    assert roi.scale < 1.0
+
+
+def test_small_roi_is_not_upscaled(make_scene):
+    # ROI 120x200 -> scale = 1.0, work_size = (120, 200)
+    scene = make_scene((400, 400), [((100, 100, 120, 200), None)])
+    roi = Roi(100, 100, 220, 300, 1.0, (400, 400))
+    assert roi.scale == 1.0 and roi.work_size == (120, 200)
+    small = make_scene((400, 400), [((100, 100, 188, 168), None)])
+    r = person_roi(small, small.persons[0], margin=0.0, min_px=16)
+    assert r.scale == 1.0 and r.work_size == r.full_size
+
+
+def test_guided_filter_matches_box_filter_on_constant_guide():
+    rng = np.random.default_rng(0)
+    src = rng.random((60, 70)).astype(np.float32)
+    guide = np.full((60, 70), 0.5, np.float32)
+    out = guided_filter(guide, src, 4, 1e-2)
+    # guide hằng -> a = 0, b = box(p) -> kết quả = box(box(p)) (công thức He et al. lấy trung bình a, b lần nữa)
+    ref = cv2.boxFilter(cv2.boxFilter(src, -1, (9, 9)), -1, (9, 9))
+    assert np.allclose(out, ref, atol=1e-3)
+
+
+def test_guided_filter_handles_3d_src():
+    src = np.random.default_rng(1).random((30, 40, 3)).astype(np.float32)
+    guide = np.random.default_rng(2).random((30, 40)).astype(np.float32)
+    out = guided_filter(guide, src, 3, 1e-3)
+    assert out.shape == src.shape and out.dtype == np.float32
+
+
+def _alpha_setup(make_scene, box=(300, 100, 1100, 900), shape=(H, W)):
+    scene = make_scene(shape, [(box, None)])
+    roi = person_roi(scene, scene.persons[0])
+    ww, wh = roi.work_size
+    alpha_work = np.zeros((wh, ww), np.float32)
+    guide = np.zeros(shape + (3,), np.float32)
+    return roi, alpha_work, guide
+
+
+def test_upsample_alpha_shape_and_zero_outside_roi(make_scene):
+    roi, alpha_work, guide = _alpha_setup(make_scene)
+    alpha_work[100:400, 100:400] = 1.0
+    a = upsample_alpha(alpha_work, roi, guide)
+    assert a.shape == (H, W) and a.dtype == np.float32 and a[0, 0] == 0.0
+
+
+def test_upsample_alpha_keeps_certain_regions_binary(make_scene):
+    roi, alpha_work, guide = _alpha_setup(make_scene)
+    ww, wh = roi.work_size
+    alpha_work[:, :] = 0.0
+    alpha_work[wh // 4: 3 * wh // 4, ww // 4: 3 * ww // 4] = 1.0
+    rng = np.random.default_rng(3)
+    guide = rng.random(guide.shape).astype(np.float32)
+    a = upsample_alpha(alpha_work, roi, guide)
+    cx, cy = (roi.x1 + roi.x2) // 2, (roi.y1 + roi.y2) // 2
+    fg = a[cy - 20: cy + 20, cx - 20: cx + 20]
+    bg = a[roi.y1: roi.y1 + 10, roi.x1: roi.x1 + 10]
+    assert set(np.unique(fg)) == {1.0} and set(np.unique(bg)) == {0.0}
+
+
+def test_upsample_alpha_aligned_for_border_roi(make_scene):
+    # ROI chạm biên phải/dưới: tâm khối α sáng phải nằm trong ROI, lệch <= 2 px
+    box = (W - 500, H - 600, W, H)
+    roi, alpha_work, guide = _alpha_setup(make_scene, box=box)
+    assert roi.x2 == W and roi.y2 == H
+    ww, wh = roi.work_size
+    s = ww / roi.full_size[0]
+    # khối sáng 100x100 (px gốc) tại (W-300..W-200, H-300..H-200)
+    ex, ey = (W - 250), (H - 250)
+    x0, x1 = round((W - 300 - roi.x1) * s), round((W - 200 - roi.x1) * s)
+    y0, y1 = round((H - 300 - roi.y1) * s), round((H - 200 - roi.y1) * s)
+    alpha_work[y0:y1, x0:x1] = 1.0
+    a = upsample_alpha(alpha_work, roi, guide)
+    ys, xs = np.nonzero(a > 0.5)
+    assert abs(xs.mean() - ex) <= 2 and abs(ys.mean() - ey) <= 2
+    assert roi.x1 <= xs.min() and xs.max() < roi.x2
+
+
+def test_upsample_rgb_keeps_base_outside_roi(make_scene):
+    roi, _, guide = _alpha_setup(make_scene)
+    ww, wh = roi.work_size
+    rgb_work = np.full((wh, ww, 3), 0.7, np.float32)
+    base = np.random.default_rng(4).random((H, W, 3)).astype(np.float32)
+    out = upsample_rgb(rgb_work, roi, guide, base)
+    assert out.shape == (H, W, 3) and out.dtype == np.float32
+    assert np.array_equal(out[0, 0], base[0, 0])
+    assert abs(float(out[(roi.y1 + roi.y2) // 2, (roi.x1 + roi.x2) // 2, 0]) - 0.7) < 0.05
