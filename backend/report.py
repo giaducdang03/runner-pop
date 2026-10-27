@@ -20,6 +20,9 @@ from PIL import Image
 from . import pipeline as P
 from .pipeline.trace import Stage
 
+# Tên ứng dụng hiện trong tiêu đề và chân trang PDF (giữ khớp với tiêu đề giao diện Streamlit)
+APP_TITLE = "RunnerPop – Image Preprocessing Optimization for AI-based Runner Segmentation"
+
 _FONT_CANDIDATES: List[Tuple[str, str]] = [
     (r"C:\Windows\Fonts\arial.ttf", r"C:\Windows\Fonts\arialbd.ttf"),
     (r"C:\Windows\Fonts\segoeui.ttf", r"C:\Windows\Fonts\segoeuib.ttf"),
@@ -62,13 +65,17 @@ class _Report(FPDF):
         self.set_y(-10)
         self.set_font("vn", "", 8)
         self.set_text_color(130)
-        self.cell(0, 5, f"Color Pop Runner · trang {self.page_no()}", align="C")
+        self.cell(0, 5, f"{APP_TITLE} · trang {self.page_no()}", align="C")
         self.set_text_color(0)
 
     # ---- khối văn bản
-    def h1(self, text: str):
-        self.set_font("vn", "B", 20)
-        self.cell(0, 10, text, new_x="LMARGIN", new_y="NEXT")
+    def h1(self, text: str, subtitle: str = ""):
+        # tiêu đề dài -> tự xuống dòng (multi_cell) ở cỡ chữ vừa phải, không tràn khỏi trang
+        self.set_font("vn", "B", 15)
+        self.multi_cell(0, 7.5, text, new_x="LMARGIN", new_y="NEXT")
+        if subtitle:
+            self.set_font("vn", "", 12)
+            self.cell(0, 7, subtitle, new_x="LMARGIN", new_y="NEXT")
 
     def h2(self, text: str, need: float = 14):
         self.ensure(need)               # need = chỗ tối thiểu cho tiêu đề + nội dung đầu tiên (tránh tiêu đề mồ côi cuối trang)
@@ -168,6 +175,51 @@ _HEAVY = (("yolo", "YOLO"), ("birefnet", "BiRefNet"), ("matting", "Matting"),
           ("rvm", "RVM"), ("modnet", "MODNet"))
 
 
+_LIBS = (("numpy", "numpy"), ("opencv", "opencv-python"), ("pymatting", "PyMatting"), ("ultralytics", "ultralytics"),
+         ("torch", "torch"), ("onnxruntime", "onnxruntime"), ("onnxruntime-gpu", "onnxruntime-gpu"),
+         ("openvino", "openvino"), ("rembg", "rembg"), ("fpdf2", "fpdf2"))
+
+
+def _lib_versions() -> str:
+    """Phiên bản các thư viện chính đang cài (chỉ đọc metadata, không import nặng); thiếu thì bỏ qua."""
+    from importlib import metadata
+    out = []
+    for label, dist in _LIBS:
+        try:
+            out.append(f"{label} {metadata.version(dist)}")
+        except Exception:
+            continue
+    return " · ".join(out) or "-"
+
+
+def runtime_config_rows() -> List[Tuple[str, str]]:
+    """Cấu hình backend ĐANG chạy (đọc lúc xuất báo cáo): thiết bị/tăng tốc, tham số xử lý, model, máy & thư viện."""
+    import platform
+    from .pipeline import accel
+    from .pipeline import config as C
+
+    dev = accel.resolve()
+    backends = accel.available_backends()
+    return [
+        ("Thiết bị mặc định", accel.device_label(dev)),
+        ("Backend GPU khả dụng", ", ".join(f"{k}: {v}" for k, v in backends.items()) or "không có (chạy CPU)"),
+        ("ACCEL_BACKEND / DEVICE", f"{C.ACCEL_BACKEND} / {C.ACCEL_DEVICE} (chỉ số GPU {C.ACCEL_DEVICE_INDEX}, kiểu số {C.ACCEL_DTYPE})"),
+        ("Bộ nhớ model tối đa", f"{C.ACCEL_MEM_BUDGET_MB} MB"),
+        ("Cache model", str(C.ACCEL_CACHE_DIR)),
+        ("Chế độ vùng xử lý", "toàn ảnh (FULLRES=1)" if C.FULLRES else "ROI quanh người"),
+        ("ROI", f"nở {C.ROI_MARGIN:.0%} (tối thiểu {C.ROI_MIN_PX} px), cạnh dài làm việc ≤ {C.WORK_MAX_SIDE} px"),
+        ("Guided filter", f"bán kính {C.GUIDED_RADIUS}, eps {C.GUIDED_EPS:g}"),
+        ("Ảnh đầu vào", f"thu nhỏ về cạnh dài ≤ {C.MAX_SIDE} px"),
+        ("Engine mặc định", C.DEFAULT_ENGINE),
+        ("Model phát hiện", f"{C.YOLO_WEIGHTS} (imgsz {C.YOLO_IMGSZ})"),
+        ("Model BiRefNet", f"{C.BIREFNET_MODEL} (đầu vào {C.BIREFNET_SIZE}×{C.BIREFNET_SIZE})"),
+        ("Hệ điều hành", platform.platform()),
+        ("CPU", platform.processor() or platform.machine() or "-"),
+        ("Python", platform.python_version()),
+        ("Thư viện", _lib_versions()),
+    ]
+
+
 def device_summary(*stage_lists) -> str:
     """Tóm tắt thiết bị của các bước nặng, vd "YOLO: CPU · BiRefNet: cuda: X (fp16)"; thiếu thì "-".
     Nhận một hay nhiều danh sách stage; bước lặp lại (thử lại YOLO) lấy lần cuối."""
@@ -184,7 +236,7 @@ def build_report(rgb: np.ndarray, scene: P.Scene, cutout: Optional[P.Cutout], me
                  intensity: float = 1.0, engine_labels: Optional[dict] = None) -> bytes:
     pdf = _Report()
     pdf.add_page()
-    pdf.h1("Color Pop Runner - Báo cáo xử lý")
+    pdf.h1(APP_TITLE, "Báo cáo xử lý")
     pdf.set_font("vn", "", 9)
     pdf.set_text_color(110)
     pdf.cell(0, 5, datetime.now().strftime("Tạo lúc %H:%M %d/%m/%Y"), new_x="LMARGIN", new_y="NEXT")
@@ -224,15 +276,21 @@ def build_report(rgb: np.ndarray, scene: P.Scene, cutout: Optional[P.Cutout], me
     else:
         pdf.kv([("Trạng thái", "Chưa tách nền")])
 
-    pdf.h2("3. Pipeline 1 - Tiền xử lý & phát hiện người", need=80)
+    pdf.h2("3. Cấu hình đang chạy", need=60)
+    try:
+        pdf.kv(runtime_config_rows())
+    except Exception as e:   # không để việc đọc cấu hình làm hỏng cả báo cáo
+        pdf.kv([("Cấu hình", f"không đọc được ({type(e).__name__}: {e})")])
+
+    pdf.h2("4. Pipeline 1 - Tiền xử lý & phát hiện người", need=80)
     pdf.stage_grid(scene.trace.stages)
 
     if cutout and cutout.trace:
-        pdf.h2(f"4. Pipeline 2 - Tách nền ({labels.get(method, method)})", need=80)
+        pdf.h2(f"5. Pipeline 2 - Tách nền ({labels.get(method, method)})", need=80)
         pdf.stage_grid(cutout.trace.stages)
 
         pdf.add_page()
-        pdf.h2("5. Kết quả: trước / sau")
+        pdf.h2("6. Kết quả: trước / sau")
         after = P.compose(cutout, intensity)
         half = (pdf.content_w - 6) / 2
         y0 = pdf.get_y()
