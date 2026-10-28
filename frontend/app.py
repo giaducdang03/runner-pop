@@ -375,6 +375,9 @@ a = st.session_state["assets"]
 render_pipeline(f"Pipeline 2 · Tách nền ({ENGINE_LABELS.get(info['method'], info['method'])})",
                 st.session_state["trace"]["segment"])
 st.success(f"Xong trong {info['elapsed_s']} s.")
+_fc = info.get("focus_confidence")
+if _fc is not None and _fc < OPTS.get("focus_conf_min", 1.3):
+    st.warning("Ảnh này không có phông mờ rõ — kết quả 'mặt phẳng nét' có thể kém tin cậy. Thử engine khác.")
 
 VIEWER = """
 <style>

@@ -94,6 +94,7 @@ class Trace:
     def __init__(self):
         self.stages: List[Stage] = []
         self.current: Optional[str] = None      # nhãn bước đang chạy (để giao diện hiện realtime)
+        self.meta: dict = {}                    # số liệu phụ engine ghi lại (vd focus_confidence)
 
     @contextmanager
     def stage(self, key: str, label: str, note: str = ""):

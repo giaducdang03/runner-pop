@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import numpy as np
+
+from backend.pipeline import matting
 import pytest
 
 from backend.pipeline import config as C
@@ -169,4 +171,5 @@ def test_scale1_alpha_equals_matting_output(monkeypatch, make_scene):   # R14
 
     monkeypatch.setattr(gc_mod, "matte", fake_matte)
     c = build_cutout(scene, scene.persons[0], "cf")
-    assert np.array_equal(roi.crop(c.alpha), captured["alpha"])
+    # chỉ còn bước kéo giãn đuôi alpha (tighten_alpha), guided filter không được chạm vào
+    assert np.array_equal(roi.crop(c.alpha), matting.tighten_alpha(captured["alpha"]))

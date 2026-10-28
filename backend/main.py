@@ -255,6 +255,7 @@ class ProcessOut(BaseModel):
     method: str
     elapsed_s: float
     unknown_px: int
+    focus_confidence: Optional[float] = None    # chỉ engine focus: tỉ lệ nét người/nền (FR-126)
 
 
 # --------------------------------------------------------------------------
@@ -279,7 +280,8 @@ def options():
     """Danh sách bước có thể chọn - frontend dựng giao diện từ đây nên thêm bước mới không cần sửa UI."""
     return {"engines": P.available_engines(), "preprocess": P.available_preprocess(),
             "device": accel.resolve().to_dict(), "devices": ["auto", "cpu", "gpu"],
-            "default_engine": default_engine(P.engine_names())}
+            "default_engine": default_engine(P.engine_names()),
+            "focus_conf_min": C.FOCUS_CONF_MIN}
 
 
 def _read_upload(file: UploadFile) -> np.ndarray:
@@ -435,6 +437,7 @@ def process(
             session_id=sid, person=chosen.idx, method=method,
             elapsed_s=round(time.time() - t0, 2),
             unknown_px=int((s.cutout.trimap == 128).sum()),
+            focus_confidence=job.trace.meta.get("focus_confidence"),
         ).model_dump()
 
     if background:
