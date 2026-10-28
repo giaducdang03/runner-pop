@@ -122,6 +122,27 @@ def guided_filter(guide: np.ndarray, src: np.ndarray, radius: int = C.GUIDED_RAD
     return (box(a) * I + box(b)).astype(np.float32)
 
 
+def guided_filter_masked(guide: np.ndarray, src: np.ndarray, mask: np.ndarray,
+                         radius: int = C.GUIDED_RADIUS, eps: float = C.GUIDED_EPS,
+                         tile: int = 128) -> np.ndarray:
+    """Như `guided_filter` nhưng chỉ tính ở những ô `tile`×`tile` có điểm nào đó thuộc `mask`;
+    ô còn lại giữ nguyên `src`. Mỗi ô lọc kèm viền đệm `2*radius + 2` (độ với của hai lần box)
+    nên giá trị tại điểm thuộc `mask` giống hệt lọc cả ảnh."""
+    out = src.astype(np.float32).copy()
+    h, w = guide.shape[:2]
+    halo = 2 * radius + 2
+    for y0 in range(0, h, tile):
+        y1 = min(h, y0 + tile)
+        for x0 in range(0, w, tile):
+            x1 = min(w, x0 + tile)
+            if not mask[y0:y1, x0:x1].any():
+                continue
+            cy0, cy1, cx0, cx1 = max(0, y0 - halo), min(h, y1 + halo), max(0, x0 - halo), min(w, x1 + halo)
+            f = guided_filter(guide[cy0:cy1, cx0:cx1], src[cy0:cy1, cx0:cx1], radius, eps)
+            out[y0:y1, x0:x1] = f[y0 - cy0:y1 - cy0, x0 - cx0:x1 - cx0]
+    return out
+
+
 def _guide_gray(roi: Roi, guide_rgb_f: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(np.ascontiguousarray(roi.crop(guide_rgb_f), dtype=np.float32),
                         cv2.COLOR_RGB2GRAY)
@@ -152,14 +173,19 @@ def upsample_alpha(alpha_work: np.ndarray, roi: Roi, guide_rgb_f: np.ndarray,
 
 
 def upsample_rgb(rgb_work: np.ndarray, roi: Roi, guide_rgb_f: np.ndarray,
-                 base: np.ndarray) -> np.ndarray:
+                 base: np.ndarray, band: Optional[np.ndarray] = None) -> np.ndarray:
     """Nâng ảnh RGB float (F hoặc B) về `full_shape` bằng resize + guided filter.
-    Ngoài ROI lấy `base`."""
+    `band` (bool, `full_shape`): chỉ lọc ở các ô chạm vành này, ô khác giữ bản resize thường
+    (nơi gọi sẽ ghi đè bằng ảnh gốc). Ngoài ROI lấy `base`."""
     size = roi.full_size
     up = rgb_work.astype(np.float32)
     if up.shape[1::-1] != size:
         up = cv2.resize(up, size, interpolation=cv2.INTER_LINEAR)
-        up = guided_filter(_guide_gray(roi, guide_rgb_f), up)
+        guide = _guide_gray(roi, guide_rgb_f)
+        if band is None:
+            up = guided_filter(guide, up)
+        else:
+            up = guided_filter_masked(guide, up, roi.crop(band))
     # cùng kích thước (scale 1) -> không lọc, chỉ dán (R14)
     out = base.astype(np.float32).copy()
     out[roi.y1:roi.y2, roi.x1:roi.x2] = up

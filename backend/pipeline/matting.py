@@ -125,8 +125,11 @@ def finish_cutout(rgb_f: np.ndarray, alpha_work: np.ndarray, trimap_work: np.nda
         # khử nhiễm ở độ phân giải làm việc (FR-93), rồi nâng F/B bằng guided filter
         rgb_work = roi.to_work(rgb_f)
         fg_work, bg_work = decontaminate(rgb_work, alpha_work.astype(np.float32))
-        fg = np.clip(upsample_rgb(fg_work, roi, rgb_f, base=rgb_f), 0.0, 1.0).astype(np.float32)
-        bg = np.clip(upsample_rgb(bg_work, roi, rgb_f, base=rgb_f), 0.0, 1.0).astype(np.float32)
+        # F/B chỉ có ý nghĩa ở vành 0 < α < 1 (ngoài vành bị ghi đè bằng ảnh gốc ngay dưới) -> chỉ
+        # lọc các ô chạm vành, nở vài điểm ảnh cho chắc
+        band = cv2.dilate(((alpha > 0.0) & (alpha < 1.0)).astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+        fg = np.clip(upsample_rgb(fg_work, roi, rgb_f, base=rgb_f, band=band), 0.0, 1.0).astype(np.float32)
+        bg = np.clip(upsample_rgb(bg_work, roi, rgb_f, base=rgb_f, band=band), 0.0, 1.0).astype(np.float32)
         solid = alpha >= 1.0 - 1e-6
         fg[solid] = rgb_f[solid]                 # α = 1 -> F chính là ảnh gốc
         clear = alpha <= 0.0
