@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Cho phép chọn bộ lọc áp lên nền bên dưới người đã tách (đen trắng, mờ, bokeh, sepia, ấm, lạnh, mosaic, phác họa, tối góc, màu trơn) thay cho hiệu ứng đen trắng duy nhất hiện nay, chọn bằng lưới ô xem trước từ chính ảnh của người dùng và một thanh cường độ chung.
+**Go**Goal:** Cho phép chọn bộ lọc áp lên nền bên dưới người đã tách (đen trắng, mờ, bokeh, sepia, ấm, lạnh, mosaic, phác họa, tối góc, màu trơn) thay cho hiệu ứng đen trắng duy nhất hiện nay, chọn bằng lưới ô xem trước từ chính ảnh của người dùng và một thanh cường độ chung.
 
 **Architecture:** Thêm `pipeline/bgfilter.py` (registry `BG_FILTERS`, cùng kiểu `ENGINES`/`STEPS`). Backend dựng nền đã lọc `Bf` ở cường độ đầy đủ, cache trong `Cutout`; công thức ghép tổng quát hoá thành `out = α·F + (1−α)·((1−s)·B + s·Bf)`. Viewer tải `Bf` như một ảnh thành phần và chỉ trộn trong JS, nên JS không phải cài lại từng bộ lọc. Giao diện chọn là lưới ô (ảnh xem trước do backend dựng trên bản thu nhỏ của chính cutout) và một thanh cường độ Streamlit duy nhất dùng cho viewer, ảnh tải về và PDF. Các bộ lọc lấy mẫu lân cận dùng trung bình chuẩn hoá theo mặt nạ nền hợp lệ để không lem màu người ra nền.
 
@@ -175,5 +175,4 @@
 ## Tự kiểm tra kế hoạch với SRS 4.14
 
 - FR-130/131 → Task 1; FR-132 → Task 1 (test rò màu, người chiếm khung, ảnh lẻ); FR-133 → Task 1 (cache) + Task 3 (400); FR-134, FR-137 → Task 3–4; FR-135 → Task 2–3; FR-136 → Task 3 (không đụng `build_cutout`/`Trace`).
-- Bộ lọc "giảm bão hoà" trong đề xuất ban đầu **được bỏ**: trùng với thanh cường độ của `bw`.
-- Chưa làm (ngoài phạm vi): thay nền bằng ảnh tải lên, lọc lên người, lọc theo vùng.
+ vùng.
