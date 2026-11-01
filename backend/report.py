@@ -250,7 +250,8 @@ def with_filter_compose_stage(stages: List[Stage], cutout: P.Cutout, bg_filter: 
 
 def build_report(rgb: np.ndarray, scene: P.Scene, cutout: Optional[P.Cutout], meta: dict,
                  intensity: float = 1.0, engine_labels: Optional[dict] = None,
-                 bg_filter: str = "bw", color: str = "#808080") -> bytes:
+                 bg_filter: str = "bw", color: str = "#808080", bib: Optional[str] = None) -> bytes:
+    """`bib`: số BIB người dùng đã xác nhận/sửa; None -> dùng số đọc được lúc tách nền (meta["bib"])."""
     pdf = _Report()
     pdf.add_page()
     pdf.h1(APP_TITLE, "Báo cáo xử lý")
@@ -309,6 +310,10 @@ def build_report(rgb: np.ndarray, scene: P.Scene, cutout: Optional[P.Cutout], me
 
         pdf.add_page()
         pdf.h2("6. Kết quả: trước / sau")
+        bib_text = (meta.get("bib", "") if bib is None else bib) or ""
+        pdf.set_font("vn", "B", 14)
+        pdf.cell(0, 8, f"Số BIB: {bib_text}" if bib_text else "Số BIB: không đọc được", new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(1)
         after = P.compose(cutout, intensity, bg_filter, color)
         half = (pdf.content_w - 6) / 2
         y0 = pdf.get_y()

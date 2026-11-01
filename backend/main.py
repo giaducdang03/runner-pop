@@ -558,7 +558,8 @@ def compose(
 
 @app.get("/session/{sid}/report.pdf")
 def report(sid: str, intensity: float = Query(1.0, ge=0.0, le=1.0),
-           filter: str = Query("bw"), color: str = Query("#808080")):
+           filter: str = Query("bw"), color: str = Query("#808080"),
+           bib: Optional[str] = Query(None, max_length=32, description="Số BIB đã xác nhận; bỏ trống = số đọc được lúc tách nền")):
     """Báo cáo PDF: thông tin ảnh, cài đặt, hai pipeline với ảnh từng bước, kết quả trước / sau."""
     s = _get(sid)
     if s.scene is None:
@@ -566,7 +567,8 @@ def report(sid: str, intensity: float = Query(1.0, ge=0.0, le=1.0),
     labels = {e["name"]: e["label"] for e in P.available_engines()}
     try:
         _bg_args(filter, color)
-        data = build_report(s.rgb, s.scene, s.cutout, s.meta, intensity, labels, bg_filter=filter, color=color)
+        data = build_report(s.rgb, s.scene, s.cutout, s.meta, intensity, labels, bg_filter=filter, color=color,
+                            bib=None if bib is None else "".join(ch for ch in bib if ch.isalnum()))
     except RuntimeError as e:
         raise HTTPException(500, str(e))
     return Response(data, media_type="application/pdf",

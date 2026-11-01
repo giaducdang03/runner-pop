@@ -96,3 +96,12 @@ def test_previews_names_subset(client, sid):
     r = client.get(f"/session/{sid}/bgfilter_previews", params={"names": "blur,sepia"})
     assert r.status_code == 200 and [i["name"] for i in r.json()] == ["blur", "sepia"]
     assert client.get(f"/session/{sid}/bgfilter_previews", params={"names": "nope"}).status_code == 400
+
+
+def test_report_passes_bib(client, sid, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(main, "build_report", lambda *a, **k: seen.update(k) or b"%PDF")
+    client.get(f"/session/{sid}/report.pdf", params={"bib": "F-5215 "})
+    assert seen["bib"] == "F5215"                      # chỉ giữ chữ và số
+    client.get(f"/session/{sid}/report.pdf")
+    assert seen["bib"] is None                         # không truyền -> dùng BIB đã đọc lúc tách nền

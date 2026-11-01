@@ -466,7 +466,7 @@ with _right:
 
 # ---------------------------------------------------------------- hàng trên cùng: Số BIB | định dạng | tải ảnh | PDF
 dl_args = {"intensity": bg_int, "filter": bg_filter, "color": bg_color}
-_pdf_ok = st.session_state.get("pdf_key") == (sid, _ver, bg_filter, bg_color, bg_int)
+_pdf_ok = st.session_state.get("pdf_key") == (sid, _ver, bg_filter, bg_color, bg_int, _bib)
 _make_pdf = False
 with _top:
     _cb, _ci, _cp = st.columns([2.6, 1.2, 1.6], gap="small", vertical_alignment="bottom")
@@ -497,7 +497,7 @@ if _make_pdf:
 
         def _fetch_pdf():
             try:
-                _box["r"] = requests.get(f"{API}/session/{sid}/report.pdf", params=dl_args, timeout=120)
+                _box["r"] = requests.get(f"{API}/session/{sid}/report.pdf", params={**dl_args, "bib": _bib}, timeout=120)
             except requests.RequestException as e:
                 _box["err"] = str(e)
 
@@ -515,13 +515,13 @@ if _make_pdf:
             st.error(f"Không tạo được PDF: {_box.get('err', 'không rõ lỗi')}")
         elif rr.status_code == 200:
             st.session_state["pdf"] = rr.content
-            st.session_state["pdf_key"] = (sid, _ver, bg_filter, bg_color, bg_int)     # PDF chỉ đúng với hiệu ứng lúc tạo
+            st.session_state["pdf_key"] = (sid, _ver, bg_filter, bg_color, bg_int, _bib)     # PDF chỉ đúng với hiệu ứng lúc tạo
             st.rerun()                                # nút chuyển thành "Tải báo cáo PDF"
         else:
             st.error(err_msg(rr))
 elif st.session_state.get("pdf") and not _pdf_ok:
     with _pdf_status:
-        st.caption("Hiệu ứng đã đổi — bấm tạo lại báo cáo PDF để khớp với ảnh hiện tại.")
+        st.caption("Hiệu ứng hoặc số BIB đã đổi — bấm tạo lại báo cáo PDF để khớp.")
 
 with st.expander("Debug: alpha & trimap"):
     _e1, _e2 = st.columns(2)

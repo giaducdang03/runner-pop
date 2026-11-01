@@ -196,7 +196,7 @@ Trạng thái: ✔ = đã triển khai.
 
 | ID | Yêu cầu | TT |
 |---|---|---|
-| FR-70 | Xuất PDF gồm: thông tin ảnh & chất lượng, cài đặt tách nền, thời gian, Pipeline 1, Pipeline 2 (ảnh từng bước), kết quả trước/sau và alpha. | ✔ |
+| FR-70 | Xuất PDF gồm: thông tin ảnh & chất lượng, cài đặt tách nền, thời gian, Pipeline 1, Pipeline 2 (ảnh từng bước), kết quả trước/sau (kèm số BIB đã xác nhận ở giao diện, hoặc số đọc được lúc tách nền; "không đọc được" nếu trống) và alpha. | ✔ |
 | FR-71 | Xuất được cả khi chưa tách nền (chỉ gồm phần thông tin và Pipeline 1). | ✔ |
 | FR-72 | Hỗ trợ tiếng Việt có dấu; thiếu font thì báo lỗi rõ ràng và cho phép chỉ định bằng `REPORT_FONT`. | ✔ |
 
