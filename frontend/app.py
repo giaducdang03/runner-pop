@@ -359,6 +359,7 @@ if go or auto_run:
     if job is not None:
         info = job["result"]
         st.session_state["done"] = info
+        st.session_state["seg_ver"] = st.session_state.get("seg_ver", 0) + 1     # làm mới cache ảnh xem trước / nền đã lọc
         st.session_state["trace"]["segment"] = stages
         st.session_state["assets"] = {
             "orig": base64.b64encode(api_get(f"/session/{sid}/original.jpg").content).decode(),
@@ -387,6 +388,44 @@ _fc = info.get("focus_confidence")
 if _fc is not None and _fc < OPTS.get("focus_conf_min", 1.3):
     st.warning("Ảnh này không có phông mờ rõ — kết quả 'mặt phẳng nét' có thể kém tin cậy. Thử engine khác.")
 
+# ---------------------------------------------------------------- chỉnh màu nền (lưới bộ lọc + cường độ)
+BG_FILTERS = OPTS.get("bg_filters") or [{"name": "bw", "label": "Nền đen trắng"}]
+if st.session_state.get("bg_filter") not in {f["name"] for f in BG_FILTERS}:
+    st.session_state["bg_filter"] = "bw"
+bg_filter = st.session_state["bg_filter"]
+bg_color = st.session_state.get("bg_color", "#808080")
+_ver = st.session_state.get("seg_ver", 0)
+
+st.markdown("#### Chỉnh màu nền")
+st.caption("Chạm để xem trước hiệu ứng trên ảnh của bạn.")
+if st.session_state.get("bgf_prev_key") != (sid, bg_color, _ver):
+    try:
+        _pv = api_get(f"/session/{sid}/bgfilter_previews", params={"color": bg_color}).json()
+    except Exception:
+        _pv = []                                          # backend cũ hoặc lỗi -> lưới chỉ còn nút, không có ảnh
+    st.session_state["bgf_prev"] = {p["name"]: base64.b64decode(p["image"].split(",", 1)[1]) for p in _pv}
+    st.session_state["bgf_prev_key"] = (sid, bg_color, _ver)
+_prev = st.session_state["bgf_prev"]
+_cols = st.columns(3)
+for _i, _f in enumerate(BG_FILTERS):
+    with _cols[_i % 3], st.container(border=True):
+        if _f["name"] in _prev:
+            st.image(_prev[_f["name"]], use_container_width=True)
+        if st.button(_f["label"], key=f"bgf_{_f['name']}", use_container_width=True,
+                     type="primary" if _f["name"] == bg_filter else "secondary"):
+            st.session_state["bg_filter"] = _f["name"]
+            st.rerun()
+if bg_filter == "solid":
+    bg_color = st.color_picker("Màu nền", bg_color, key="bg_color")
+bg_int = 1.0
+if bg_filter != "none":
+    bg_int = st.slider("Cường độ hiệu ứng", 0, 100, 100, 5, format="%d%%", key="bg_intensity") / 100
+
+if st.session_state.get("bgf_key") != (sid, bg_filter, bg_color, _ver):
+    st.session_state["bgf_img"] = base64.b64encode(api_get(
+        f"/session/{sid}/bgfilter.jpg", params={"filter": bg_filter, "color": bg_color}).content).decode()
+    st.session_state["bgf_key"] = (sid, bg_filter, bg_color, _ver)
+
 VIEWER = """
 <style>
   :root { color-scheme: light dark; }
@@ -404,8 +443,6 @@ VIEWER = """
           background:#fff; box-shadow:0 0 6px #0008; pointer-events:none; }
 </style>
 <div id="bar">
-  <label>Cường độ nền đen trắng
-    <input id="s" type="range" min="0" max="100" value="100" style="width:200px"><b id="sv">100%</b></label>
   <label>Chế độ
     <select id="mode">
       <option value="split">So sánh (kéo thanh)</option>
@@ -426,29 +463,28 @@ const px = i => { const c = document.createElement('canvas'); c.width = i.width;
   const x = c.getContext('2d', {willReadFrequently:true}); x.drawImage(i,0,0); return x.getImageData(0,0,i.width,i.height); };
 
 (async () => {
-  const [io, ifg, ibg, ia] = await Promise.all([
+  const [io, ifg, ibg, ia, ibf] = await Promise.all([
     load("data:image/jpeg;base64,__ORIG__"), load("data:image/png;base64,__FG__"),
-    load("data:image/jpeg;base64,__BG__"), load("data:image/png;base64,__ALPHA__")]);
+    load("data:image/jpeg;base64,__BG__"), load("data:image/png;base64,__ALPHA__"),
+    load("data:image/jpeg;base64,__BF__")]);
   const W = io.width, H = io.height, N = W*H;
-  const F = px(ifg).data, B = px(ibg).data, A = px(ia).data;
-  const gray = new Float32Array(N);
-  for (let i=0;i<N;i++) gray[i] = 0.2126*B[4*i] + 0.7152*B[4*i+1] + 0.0722*B[4*i+2];
+  const F = px(ifg).data, B = px(ibg).data, A = px(ia).data, BF = px(ibf).data;   // BF: nền đã lọc (bộ lọc chọn ở lưới)
 
   const cv = document.getElementById('cv'); cv.width = W; cv.height = H;
   const ctx = cv.getContext('2d');
   const out = ctx.createImageData(W, H), D = out.data;
-  const sl = document.getElementById('s'), sv = document.getElementById('sv'), mode = document.getElementById('mode');
+  const mode = document.getElementById('mode');
   const line = document.getElementById('line'), knob = document.getElementById('knob'), wrap = document.getElementById('wrap');
   const tag = document.getElementById('tag'), tag2 = document.getElementById('tag2');
-  let split = 0.5, s = 1.0;
+  let split = 0.5, s = __S__;
 
   function render() {
-    // cùng công thức với backend: out = a*F + (1-a)*((1-s)*B + s*gray(B))
+    // cùng công thức với backend: out = a*F + (1-a)*((1-s)*B + s*Bf)
     for (let i=0;i<N;i++) {
-      const a = A[4*i]/255, g = gray[i], k = 4*i;
-      D[k]   = a*F[k]   + (1-a)*((1-s)*B[k]   + s*g);
-      D[k+1] = a*F[k+1] + (1-a)*((1-s)*B[k+1] + s*g);
-      D[k+2] = a*F[k+2] + (1-a)*((1-s)*B[k+2] + s*g);
+      const a = A[4*i]/255, k = 4*i;
+      D[k]   = a*F[k]   + (1-a)*((1-s)*B[k]   + s*BF[k]);
+      D[k+1] = a*F[k+1] + (1-a)*((1-s)*B[k+1] + s*BF[k+1]);
+      D[k+2] = a*F[k+2] + (1-a)*((1-s)*B[k+2] + s*BF[k+2]);
       D[k+3] = 255;
     }
     draw();
@@ -470,7 +506,6 @@ const px = i => { const c = document.createElement('canvas'); c.width = i.width;
     tag.style.display = tag2.style.display = (showSplit || m === 'side') ? '' : 'none';
     line.style.left = knob.style.left = (split*100) + '%';
   }
-  sl.addEventListener('input', () => { s = sl.value/100; sv.textContent = sl.value + '%'; render(); });
   mode.addEventListener('change', draw);
   const move = e => { const r = wrap.getBoundingClientRect(); split = Math.min(1, Math.max(0, (e.clientX - r.left)/r.width)); draw(); };
   let drag = false;
@@ -482,22 +517,24 @@ const px = i => { const c = document.createElement('canvas'); c.width = i.width;
 </script>
 """
 html = (VIEWER.replace("__ORIG__", a["orig"]).replace("__FG__", a["fg"])
-        .replace("__BG__", a["bg"]).replace("__ALPHA__", a["alpha"]))
+        .replace("__BG__", a["bg"]).replace("__ALPHA__", a["alpha"])
+        .replace("__BF__", st.session_state["bgf_img"]).replace("__S__", f"{bg_int:.3f}"))
 components.html(html, height=780, scrolling=False)
 
 # ---------------------------------------------------------------- tải về + debug
 d1, d2 = st.columns(2)
 with d1:
-    dl_int = st.slider("Cường độ khi tải về", 0, 100, 100, 5, format="%d%%") / 100
+    dl_int = bg_int                                   # cùng một thanh cường độ với viewer
+    dl_args = {"intensity": dl_int, "filter": bg_filter, "color": bg_color}
     fmt = st.radio("Định dạng", ["png", "jpeg"], horizontal=True)
-    img = api_get(f"/session/{sid}/compose", params={"intensity": dl_int, "fmt": fmt}).content
+    img = api_get(f"/session/{sid}/compose", params={**dl_args, "fmt": fmt}).content
     st.download_button("Tải ảnh kết quả", img, file_name=f"{_bib_prefix or 'result'}.{'jpg' if fmt == 'jpeg' else 'png'}",
                        mime=f"image/{fmt}", use_container_width=True)
 with d2:
     st.markdown("**Báo cáo PDF**")
     if st.button("Tạo báo cáo PDF (toàn bộ thông tin + pipeline)", use_container_width=True):
         with st.spinner("Đang tạo PDF..."):
-            rr = requests.get(f"{API}/session/{sid}/report.pdf", params={"intensity": dl_int}, timeout=120)
+            rr = requests.get(f"{API}/session/{sid}/report.pdf", params=dl_args, timeout=120)
         if rr.status_code == 200:
             st.session_state["pdf"] = rr.content
         else:
