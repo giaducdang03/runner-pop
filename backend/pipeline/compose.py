@@ -1,6 +1,7 @@
 """Ghép ảnh cuối - phần nhẹ, slider gọi liên tục."""
 from __future__ import annotations
 
+import cv2
 import numpy as np
 
 from .schema import Cutout
@@ -25,6 +26,16 @@ def compose(c: Cutout, intensity: float = 1.0, bg_filter: str = "bw", color: str
     a = c.alpha[..., None]
     out = a * c.foreground + (1.0 - a) * bg
     return (np.clip(out, 0, 1) * 255.0 + 0.5).astype(np.uint8)
+
+
+def thumbnail_cutout(c: Cutout, max_side: int = 240) -> Cutout:
+    """Bản thu nhỏ của cutout (α, F, B, ảnh) để dựng ảnh xem trước nhanh; cache bộ lọc riêng."""
+    h, w = c.alpha.shape
+    k = min(1.0, max_side / max(h, w))
+    size = (max(1, round(w * k)), max(1, round(h * k)))
+    rs = lambda a: cv2.resize(a, size, interpolation=cv2.INTER_AREA)
+    return Cutout(image=rs(c.image), alpha=rs(c.alpha), foreground=rs(c.foreground), background=rs(c.background),
+                  trimap=cv2.resize(c.trimap, size, interpolation=cv2.INTER_NEAREST))
 
 
 def alpha_to_png(alpha: np.ndarray) -> np.ndarray:

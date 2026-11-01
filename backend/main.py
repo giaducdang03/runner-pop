@@ -6,6 +6,7 @@ Chạy:  uvicorn backend.main:app --host 127.0.0.1 --port 8000
 """
 from __future__ import annotations
 
+import base64
 import io
 import os
 import threading
@@ -26,6 +27,7 @@ from . import pipeline as P
 from .pipeline import accel
 from .report import build_report
 from .pipeline import config as C
+from .pipeline.bgfilter import parse_color
 from .pipeline.cache import StageCache
 
 MAX_SESSIONS = int(os.environ.get("MAX_SESSIONS", "8"))
@@ -281,7 +283,7 @@ def options():
     """Danh sách bước có thể chọn - frontend dựng giao diện từ đây nên thêm bước mới không cần sửa UI."""
     return {"engines": P.available_engines(), "preprocess": P.available_preprocess(),
             "device": accel.resolve().to_dict(), "devices": ["auto", "cpu", "gpu"],
-            "default_engine": default_engine(P.engine_names()),
+            "default_engine": default_engine(P.engine_names()), "bg_filters": P.BG_FILTERS.describe(),
             "focus_conf_min": C.FOCUS_CONF_MIN}
 
 
@@ -497,29 +499,68 @@ def trimap(sid: str):
     return Response(data, media_type=media)
 
 
+def _bg_args(name: str, color: str) -> None:
+    """Kiểm tra tên bộ lọc nền và màu; sai -> 400."""
+    if name not in P.BG_FILTERS:
+        raise HTTPException(400, f"Bộ lọc '{name}' không tồn tại. Hiện có: {', '.join(P.BG_FILTERS.names())}")
+    try:
+        parse_color(color)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/session/{sid}/bgfilter.jpg")
+def bgfilter(sid: str, filter: str = Query("bw"), color: str = Query("#808080")):
+    """Nền đã áp bộ lọc ở cường độ đầy đủ - frontend trộn với nền gốc theo cường độ."""
+    c = _cut(sid)
+    _bg_args(filter, color)
+    data, media = _encode((np.clip(P.apply_bg_filter(c, filter, color), 0, 1) * 255 + 0.5).astype(np.uint8), "jpeg", 97)
+    return Response(data, media_type=media)
+
+
+@app.get("/session/{sid}/bgfilter_previews")
+def bgfilter_previews(sid: str, color: str = Query("#808080")):
+    """Ảnh xem trước (cạnh dài 240 px) của mọi bộ lọc trên chính ảnh đã tách, cache theo cutout."""
+    c = _cut(sid)
+    _bg_args("bw", color)
+    thumb, out = None, []
+    for e in P.BG_FILTERS.describe():
+        key = ("preview", e["name"], color)
+        if key not in c.filtered:
+            thumb = thumb or P.thumbnail_cutout(c)
+            c.filtered[key] = _encode(P.compose(thumb, 1.0, e["name"], color), "jpeg", 85)[0]
+        out.append({**e, "image": "data:image/jpeg;base64," + base64.b64encode(c.filtered[key]).decode()})
+    return out
+
+
 @app.get("/session/{sid}/compose")
 def compose(
     sid: str,
     intensity: float = Query(1.0, ge=0.0, le=1.0),
     fmt: str = Query("png", pattern="^(png|jpeg)$"),
+    filter: str = Query("bw"),
+    color: str = Query("#808080"),
 ):
-    """Ảnh kết quả cuối (dùng để tải về). Slider realtime ở frontend dùng cùng công thức."""
+    """Ảnh kết quả cuối (dùng để tải về). Viewer ở frontend dùng cùng công thức."""
     c = _cut(sid)
-    out = P.compose(c, intensity)
+    _bg_args(filter, color)
+    out = P.compose(c, intensity, filter, color)
     data, media = _encode(out, fmt, 95)
     return Response(data, media_type=media,
                     headers={"Content-Disposition": f'attachment; filename="result.{ "jpg" if fmt=="jpeg" else "png"}"'})
 
 
 @app.get("/session/{sid}/report.pdf")
-def report(sid: str, intensity: float = Query(1.0, ge=0.0, le=1.0)):
+def report(sid: str, intensity: float = Query(1.0, ge=0.0, le=1.0),
+           filter: str = Query("bw"), color: str = Query("#808080")):
     """Báo cáo PDF: thông tin ảnh, cài đặt, hai pipeline với ảnh từng bước, kết quả trước / sau."""
     s = _get(sid)
     if s.scene is None:
         raise HTTPException(409, "Phát hiện người chưa xong.")
     labels = {e["name"]: e["label"] for e in P.available_engines()}
     try:
-        data = build_report(s.rgb, s.scene, s.cutout, s.meta, intensity, labels)
+        _bg_args(filter, color)
+        data = build_report(s.rgb, s.scene, s.cutout, s.meta, intensity, labels, bg_filter=filter, color=color)
     except RuntimeError as e:
         raise HTTPException(500, str(e))
     return Response(data, media_type="application/pdf",

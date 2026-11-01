@@ -233,7 +233,8 @@ def device_summary(*stage_lists) -> str:
 
 
 def build_report(rgb: np.ndarray, scene: P.Scene, cutout: Optional[P.Cutout], meta: dict,
-                 intensity: float = 1.0, engine_labels: Optional[dict] = None) -> bytes:
+                 intensity: float = 1.0, engine_labels: Optional[dict] = None,
+                 bg_filter: str = "bw", color: str = "#808080") -> bytes:
     pdf = _Report()
     pdf.add_page()
     pdf.h1(APP_TITLE, "Báo cáo xử lý")
@@ -270,7 +271,8 @@ def build_report(rgb: np.ndarray, scene: P.Scene, cutout: Optional[P.Cutout], me
             ("Thiết bị", device_summary(scene.trace.stages, cutout.trace.stages if cutout and cutout.trace else None)),
             ("Độ rộng vùng viền", f"{meta.get('band', 0):.1%} kích thước người"),
             *([("Ngưỡng độ nét", f"{meta.get('focus', 0):.0%}")] if method == "focus" else []),
-            ("Cường độ nền đen trắng", f"{intensity:.0%}"),
+            ("Bộ lọc nền", P.BG_FILTERS.label(bg_filter) + (f" ({color})" if bg_filter == "solid" else "")),
+            ("Cường độ hiệu ứng nền", f"{intensity:.0%}"),
             ("Thời gian", f"phát hiện {detect_s:.1f}s · tách nền {seg_s:.1f}s"),
         ])
     else:
@@ -291,7 +293,7 @@ def build_report(rgb: np.ndarray, scene: P.Scene, cutout: Optional[P.Cutout], me
 
         pdf.add_page()
         pdf.h2("6. Kết quả: trước / sau")
-        after = P.compose(cutout, intensity)
+        after = P.compose(cutout, intensity, bg_filter, color)
         half = (pdf.content_w - 6) / 2
         y0 = pdf.get_y()
         ih = half * h / w
