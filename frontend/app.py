@@ -553,18 +553,33 @@ with _right:
     if bg_filter == "solid":
         st.color_picker("Màu nền", bg_color, key="bg_color")
 
-# ---------------------------------------------------------------- tải về + debug
-d1, d2 = st.columns(2)
-with d1:
-    dl_int = bg_int                                   # cùng một thanh cường độ với viewer
-    dl_args = {"intensity": dl_int, "filter": bg_filter, "color": bg_color}
-    fmt = st.radio("Định dạng", ["png", "jpeg"], horizontal=True)
+# ---------------------------------------------------------------- xuất kết quả (ảnh + PDF) + debug
+dl_int = bg_int                                       # cùng một thanh cường độ với viewer
+dl_args = {"intensity": dl_int, "filter": bg_filter, "color": bg_color}
+_flabel = next((f["label"] for f in BG_FILTERS if f["name"] == bg_filter), bg_filter)
+_pdf_ok = st.session_state.get("pdf_key") == (sid, _ver, bg_filter, bg_color, bg_int)
+
+st.markdown("### Xuất kết quả")
+st.caption(f"Áp dụng hiệu ứng **{_flabel}**" + ("" if bg_filter == "none" else f" · cường độ {bg_int:.0%}")
+           + " — ảnh tải về và báo cáo đều dùng đúng thiết lập này.")
+d1, d2 = st.columns(2, gap="medium")
+
+with d1, st.container(border=True):
+    st.markdown("**Ảnh kết quả**")
+    fmt = st.radio("Định dạng", ["png", "jpeg"], horizontal=True, label_visibility="collapsed",
+                   format_func=lambda v: "PNG · không nén" if v == "png" else "JPEG · nhẹ hơn")
+    _img_name = f"{_bib_prefix or 'result'}.{'jpg' if fmt == 'jpeg' else 'png'}"
+    st.caption(f"Tên file: {_img_name}")
     img = api_get(f"/session/{sid}/compose", params={**dl_args, "fmt": fmt}).content
-    st.download_button("Tải ảnh kết quả", img, file_name=f"{_bib_prefix or 'result'}.{'jpg' if fmt == 'jpeg' else 'png'}",
-                       mime=f"image/{fmt}", use_container_width=True)
-with d2:
+    st.download_button("Tải ảnh kết quả", img, file_name=_img_name, mime=f"image/{fmt}",
+                       type="primary", use_container_width=True)
+
+with d2, st.container(border=True):
     st.markdown("**Báo cáo PDF**")
-    if st.button("Tạo báo cáo PDF (toàn bộ thông tin + pipeline)", use_container_width=True):
+    _pdf_name = f"{_bib_prefix}_report.pdf" if _bib_prefix else "color_pop_runner_report.pdf"
+    st.caption("Thông tin ảnh, cài đặt, từng bước pipeline và so sánh trước / sau.")
+    if st.button("Tạo lại báo cáo" if _pdf_ok else "Tạo báo cáo PDF", use_container_width=True,
+                 type="secondary" if _pdf_ok else "primary"):
         # backend không báo tiến độ -> chạy request ở thread phụ, thanh chạy theo thời gian (tiệm cận 95%) tới khi xong
         _box = {}
 
@@ -590,13 +605,17 @@ with d2:
         elif rr.status_code == 200:
             st.session_state["pdf"] = rr.content
             st.session_state["pdf_key"] = (sid, _ver, bg_filter, bg_color, bg_int)     # PDF chỉ đúng với hiệu ứng lúc tạo
+            _pdf_ok = True
         else:
             st.error(err_msg(rr))
-    if st.session_state.get("pdf") and st.session_state.get("pdf_key") != (sid, _ver, bg_filter, bg_color, bg_int):
-        st.caption("Hiệu ứng đã đổi — bấm tạo lại báo cáo để PDF khớp.")
+    if _pdf_ok:
+        st.caption(f"Tên file: {_pdf_name}")
+        st.download_button("Tải báo cáo PDF", st.session_state["pdf"], file_name=_pdf_name,
+                           mime="application/pdf", type="primary", use_container_width=True)
     elif st.session_state.get("pdf"):
-        st.download_button("Tải báo cáo PDF", st.session_state["pdf"], file_name=f"{_bib_prefix}_report.pdf" if _bib_prefix else "color_pop_runner_report.pdf",
-                           mime="application/pdf", use_container_width=True)
-    with st.expander("Debug: alpha & trimap"):
-        st.image(f"{API}/session/{sid}/alpha.png", caption="Alpha matte", use_container_width=True)
-        st.image(f"{API}/session/{sid}/trimap.png", caption="Trimap (xám = vùng unknown)", use_container_width=True)
+        st.caption("Hiệu ứng đã đổi — bấm tạo báo cáo để PDF khớp với ảnh hiện tại.")
+
+with st.expander("Debug: alpha & trimap"):
+    _e1, _e2 = st.columns(2)
+    _e1.image(f"{API}/session/{sid}/alpha.png", caption="Alpha matte", use_container_width=True)
+    _e2.image(f"{API}/session/{sid}/trimap.png", caption="Trimap (xám = vùng unknown)", use_container_width=True)
