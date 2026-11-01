@@ -375,6 +375,9 @@ if go or auto_run:
             "bg": base64.b64encode(api_get(f"/session/{sid}/background.jpg").content).decode(),
             "alpha": base64.b64encode(api_get(f"/session/{sid}/alpha.png").content).decode(),
         }
+        # Lần chạy tách nền có cấu trúc trang khác (khối tiến độ trực tiếp) -> chạy lại một lần để viewer được tạo trong
+        # cấu trúc "bình thường"; nếu không, lần rerun đầu tiên (vd thả thanh cường độ) sẽ dựng lại iframe viewer và reset trạng thái.
+        st.rerun()
 
 if "assets" not in st.session_state:
     st.stop()
