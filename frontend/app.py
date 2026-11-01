@@ -10,6 +10,7 @@ Luồng:
 import base64
 import json
 import os
+import threading
 import time
 from html import escape
 
@@ -559,9 +560,29 @@ with d1:
 with d2:
     st.markdown("**Báo cáo PDF**")
     if st.button("Tạo báo cáo PDF (toàn bộ thông tin + pipeline)", use_container_width=True):
-        with st.spinner("Đang tạo PDF..."):
-            rr = requests.get(f"{API}/session/{sid}/report.pdf", params=dl_args, timeout=120)
-        if rr.status_code == 200:
+        # backend không báo tiến độ -> chạy request ở thread phụ, thanh chạy theo thời gian (tiệm cận 95%) tới khi xong
+        _box = {}
+
+        def _fetch_pdf():
+            try:
+                _box["r"] = requests.get(f"{API}/session/{sid}/report.pdf", params=dl_args, timeout=120)
+            except requests.RequestException as e:
+                _box["err"] = str(e)
+
+        _th = threading.Thread(target=_fetch_pdf, daemon=True)
+        _bar = st.progress(0.0, text="Đang tạo báo cáo PDF…")
+        _t0 = time.time()
+        _th.start()
+        while _th.is_alive():
+            _el = time.time() - _t0
+            _bar.progress(min(0.95, 1 - 0.5 ** (_el / 3)), text=f"Đang tạo báo cáo PDF… {_el:.0f}s")
+            time.sleep(0.2)
+        _bar.progress(1.0, text="Xong")
+        _bar.empty()
+        rr = _box.get("r")
+        if rr is None:
+            st.error(f"Không tạo được PDF: {_box.get('err', 'không rõ lỗi')}")
+        elif rr.status_code == 200:
             st.session_state["pdf"] = rr.content
             st.session_state["pdf_key"] = (sid, _ver, bg_filter, bg_color, bg_int)     # PDF chỉ đúng với hiệu ứng lúc tạo
         else:
