@@ -1,0 +1,159 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: light dark; }
+  body { margin:0; font-family: system-ui, sans-serif; }
+  #ld { height:4px; border-radius:2px; background:rgba(128,128,128,.25); overflow:hidden; margin:0 0 8px; }
+  #ld div { height:100%; width:35%; border-radius:2px; background:#f5a623; animation:ld 1s ease-in-out infinite; }
+  @keyframes ld { 0% { margin-left:-35%; } 100% { margin-left:100%; } }
+  #bar { display:flex; gap:18px; align-items:center; flex-wrap:wrap; margin:0 0 8px; font-size:14px; }
+  #bar label, #int label { display:flex; gap:10px; align-items:center; }
+  #stage { text-align:center; }
+  /* wrap ôm sát canvas để toạ độ kéo thanh luôn khớp ảnh; ảnh dọc bị giới hạn chiều cao */
+  #wrap { position:relative; display:inline-block; max-width:100%; user-select:none; touch-action:none; }
+  canvas { display:block; width:auto; height:auto; max-width:100%; max-height:560px; border-radius:6px; }
+  .tag { position:absolute; top:8px; padding:2px 8px; border-radius:4px; font-size:12px;
+         background:rgba(0,0,0,.55); color:#fff; pointer-events:none; }
+  #line { position:absolute; top:0; bottom:0; width:2px; background:#fff; box-shadow:0 0 4px #0008; pointer-events:none; }
+  #knob { position:absolute; top:50%; width:28px; height:28px; margin:-14px 0 0 -13px; border-radius:50%;
+          background:#fff; box-shadow:0 0 6px #0008; pointer-events:none; }
+  /* thanh cường độ nằm ngay dưới ảnh, cùng khung với ảnh preview */
+  #int { margin:10px 2px 4px; font-size:14px; }
+  #int input { flex:1; accent-color:#ff4b4b; }
+  #int b { min-width:42px; text-align:right; }
+</style>
+</head>
+<body>
+<div id="ld"><div></div></div>
+<div id="bar">
+  <label>Chế độ
+    <select id="mode">
+      <option value="split">So sánh (kéo thanh)</option>
+      <option value="side">Cạnh nhau (trái: trước, phải: sau)</option>
+      <option value="after">Chỉ kết quả</option>
+      <option value="before">Chỉ ảnh gốc</option>
+    </select></label>
+</div>
+<div id="stage"><div id="wrap">
+  <canvas id="cv"></canvas>
+  <div id="tag" class="tag" style="left:8px">Trước</div>
+  <div id="tag2" class="tag" style="right:8px">Sau</div>
+  <div id="line"></div><div id="knob"></div>
+</div></div>
+<div id="int"><label>Cường độ hiệu ứng
+  <input id="s" type="range" min="0" max="100" step="5" value="100"><b id="sv">100%</b></label></div>
+
+<script>
+// Giao thức component của Streamlit (không cần bước build): gửi componentReady, nhận streamlit:render, trả giá trị bằng setComponentValue.
+const send = (type, data) => window.parent.postMessage(Object.assign({isStreamlitMessage: true, type}, data || {}), "*");
+const $ = id => document.getElementById(id);
+const load = src => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+// Xử lý ở độ phân giải vừa đủ để hiển thị (canvas chỉ hiện tối đa ~1100 px) -> ít pixel hơn nhiều, kéo mượt hơn
+const MAX_SIDE = 1100;
+const px = (i, w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const x = c.getContext('2d', {willReadFrequently: true}); x.drawImage(i, 0, 0, w, h); return x.getImageData(0, 0, w, h).data; };
+
+const cv = $('cv'), ctx = cv.getContext('2d'), mode = $('mode'), wrap = $('wrap');
+const line = $('line'), knob = $('knob'), tag = $('tag'), tag2 = $('tag2'), sl = $('s'), sv = $('sv');
+let cur = {ver: null, bf: null}, io, W = 0, H = 0, N = 0, out = null, D = null;
+let C0 = null, CD = null, AL = null, Fp = null, Bp = null;     // C0 = a*F + (1-a)*B ; CD = (1-a)*(Bf - B) ; AL = alpha 0..1
+let s = 1.0, split = 0.5, queue = Promise.resolve(), pending = false;
+
+const fit = () => send('streamlit:setFrameHeight', {height: document.documentElement.scrollHeight});
+
+// out = a*F + (1-a)*((1-s)*B + s*Bf) = C0 + s*CD  -> mỗi pixel chỉ còn 1 phép nhân-cộng cho mỗi kênh (cùng công thức với backend)
+function buildC0() {
+  for (let i = 0; i < N; i++) {
+    const a = AL[i], k = 4*i, j = 3*i;
+    C0[j]   = a*Fp[k]   + (1-a)*Bp[k];
+    C0[j+1] = a*Fp[k+1] + (1-a)*Bp[k+1];
+    C0[j+2] = a*Fp[k+2] + (1-a)*Bp[k+2];
+  }
+}
+function buildCD(BF) {
+  for (let i = 0; i < N; i++) {
+    const w = 1 - AL[i], k = 4*i, j = 3*i;
+    CD[j]   = w*(BF[k]   - Bp[k]);
+    CD[j+1] = w*(BF[k+1] - Bp[k+1]);
+    CD[j+2] = w*(BF[k+2] - Bp[k+2]);
+  }
+}
+function render() {
+  if (!D) return;
+  for (let i = 0; i < N; i++) {          // D là Uint8ClampedArray: tự làm tròn và kẹp 0..255
+    const k = 4*i, j = 3*i;
+    D[k] = C0[j] + s*CD[j]; D[k+1] = C0[j+1] + s*CD[j+1]; D[k+2] = C0[j+2] + s*CD[j+2];
+  }
+  draw();
+}
+const scheduleRender = () => { if (pending) return; pending = true; requestAnimationFrame(() => { pending = false; render(); }); };
+function draw() {
+  if (!out) return;
+  const m = mode.value, wantW = m === 'side' ? 2*W : W;
+  if (cv.width !== wantW) cv.width = wantW;            // đổi kích thước canvas sẽ xoá nội dung
+  if (m === 'side') { ctx.drawImage(io, 0, 0, W, H); ctx.putImageData(out, W, 0); }
+  else if (m === 'after') ctx.putImageData(out, 0, 0);
+  else if (m === 'before') ctx.drawImage(io, 0, 0, W, H);
+  else {
+    ctx.putImageData(out, 0, 0);
+    const x = Math.round(split * W);
+    ctx.save(); ctx.beginPath(); ctx.rect(0, 0, x, H); ctx.clip(); ctx.drawImage(io, 0, 0, W, H); ctx.restore();
+  }
+  const showSplit = m === 'split';
+  line.style.display = knob.style.display = showSplit ? '' : 'none';
+  tag.style.display = tag2.style.display = (showSplit || m === 'side') ? '' : 'none';
+  line.style.left = knob.style.left = (split * 100) + '%';
+}
+
+async function apply(args) {
+  $('int').style.display = args.show_slider ? '' : 'none';
+  if (args.ver !== cur.ver) {                          // ảnh mới (tách nền lại) -> nạp lại toàn bộ
+    $('ld').style.display = '';
+    const [i0, i1, i2, i3, i4] = await Promise.all([
+      load('data:image/jpeg;base64,' + args.orig), load('data:image/png;base64,' + args.fg),
+      load('data:image/jpeg;base64,' + args.bg), load('data:image/png;base64,' + args.alpha),
+      load('data:image/jpeg;base64,' + args.bf)]);
+    io = i0;
+    const k = Math.min(1, MAX_SIDE / Math.max(i0.width, i0.height));
+    W = Math.max(1, Math.round(i0.width * k)); H = Math.max(1, Math.round(i0.height * k)); N = W * H;
+    Fp = px(i1, W, H); Bp = px(i2, W, H);
+    const Ap = px(i3, W, H);
+    AL = new Float32Array(N); for (let i = 0; i < N; i++) AL[i] = Ap[4*i] / 255;
+    C0 = new Float32Array(3*N); CD = new Float32Array(3*N);
+    buildC0(); buildCD(px(i4, W, H));
+    cv.width = W; cv.height = H;
+    out = ctx.createImageData(W, H); D = out.data;
+    for (let i = 0; i < N; i++) D[4*i+3] = 255;
+    s = args.s / 100; sl.value = Math.round(args.s); sv.textContent = Math.round(args.s) + '%';
+    cur = {ver: args.ver, bf: args.bf_key};
+  } else if (args.bf_key !== cur.bf) {                 // chỉ đổi hiệu ứng -> chỉ nạp lại nền đã lọc
+    $('ld').style.display = '';
+    buildCD(px(await load('data:image/jpeg;base64,' + args.bf), W, H));
+    cur.bf = args.bf_key;
+  } else { fit(); return; }                            // rerun không đổi gì -> giữ nguyên trạng thái (vị trí kéo, chế độ xem)
+  render();
+  $('ld').style.display = 'none';
+  fit();
+}
+
+window.addEventListener('message', e => {
+  if (e.data && e.data.type === 'streamlit:render') queue = queue.then(() => apply(e.data.args)).catch(err => {
+    $('ld').style.display = 'none'; console.error(err); });
+});
+sl.addEventListener('input', () => { s = sl.value / 100; sv.textContent = sl.value + '%'; scheduleRender(); });   // kéo: cập nhật ngay trong trình duyệt (tối đa 1 lần vẽ / khung hình)
+sl.addEventListener('change', () => send('streamlit:setComponentValue', {value: Number(sl.value), dataType: 'json'}));  // thả: báo Python (để tải ảnh / PDF dùng đúng cường độ)
+mode.addEventListener('change', draw);
+const move = e => { const r = wrap.getBoundingClientRect(); split = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)); draw(); };
+let drag = false;
+wrap.addEventListener('pointerdown', e => { drag = true; wrap.setPointerCapture(e.pointerId); move(e); });
+wrap.addEventListener('pointermove', e => { if (drag) move(e); });
+wrap.addEventListener('pointerup', () => drag = false);
+new ResizeObserver(fit).observe(document.body);
+send('streamlit:componentReady', {apiVersion: 1});
+fit();
+</script>
+</body>
+</html>

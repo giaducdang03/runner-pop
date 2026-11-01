@@ -154,3 +154,73 @@ def test_upsample_rgb_no_resize_only_pastes():   # R14
     assert out.dtype == np.float32 and out.shape == base.shape
     assert np.array_equal(roi.crop(out), rgb_work)
     assert np.array_equal(out[0, 0], base[0, 0])
+
+
+# ---- guided filter theo ô: chỉ lọc ô chạm vành viền (nhanh hơn, kết quả giống hệt) ----
+
+def _rand_guide_src(h=300, w=420, seed=21):
+    rng = np.random.default_rng(seed)
+    guide = rng.random((h, w)).astype(np.float32)
+    src = rng.random((h, w, 3)).astype(np.float32)
+    return guide, src
+
+
+def test_guided_filter_masked_equals_full_inside_mask():
+    from backend.pipeline.roi import guided_filter_masked
+    guide, src = _rand_guide_src()
+    mask = np.zeros(guide.shape, bool)
+    mask[100:110, 30:380] = True                     # dải mỏng cắt qua nhiều ô
+    mask[200:260, 250:262] = True
+    full = guided_filter(guide, src, 8, 1e-4)
+    part = guided_filter_masked(guide, src, mask, 8, 1e-4, tile=64)
+    assert part.dtype == np.float32 and part.shape == src.shape
+    assert np.allclose(part[mask], full[mask], atol=1e-5)
+
+
+def test_guided_filter_masked_leaves_untouched_tiles_as_src():
+    from backend.pipeline.roi import guided_filter_masked
+    guide, src = _rand_guide_src()
+    mask = np.zeros(guide.shape, bool)
+    mask[10:20, 10:20] = True
+    part = guided_filter_masked(guide, src, mask, 8, 1e-4, tile=64)
+    assert np.array_equal(part[200:, 200:], src[200:, 200:])
+
+
+def test_guided_filter_masked_empty_mask_returns_src():
+    from backend.pipeline.roi import guided_filter_masked
+    guide, src = _rand_guide_src(80, 90)
+    out = guided_filter_masked(guide, src, np.zeros(guide.shape, bool), 8, 1e-4)
+    assert np.array_equal(out, src)
+
+
+def test_upsample_rgb_with_band_matches_full_filter_on_band(make_scene):
+    roi, _, guide = _alpha_setup(make_scene)
+    ww, wh = roi.work_size
+    rgb_work = np.random.default_rng(31).random((wh, ww, 3)).astype(np.float32)
+    base = np.zeros((H, W, 3), np.float32)
+    band = np.zeros((H, W), bool)
+    band[roi.y1 + 50:roi.y1 + 60, roi.x1 + 20:roi.x2 - 20] = True
+    full = upsample_rgb(rgb_work, roi, guide, base)
+    part = upsample_rgb(rgb_work, roi, guide, base, band=band)
+    assert np.allclose(part[band], full[band], atol=1e-5)
+    assert np.array_equal(part[0, 0], base[0, 0])        # ngoài ROI vẫn là base
+
+
+def test_finish_cutout_filters_only_band_tiles(monkeypatch, make_scene):
+    """F/B không còn lọc cả ROI: tổng điểm ảnh đưa vào guided filter nhỏ hơn nhiều diện tích ROI."""
+    from backend.pipeline import roi as roi_mod
+    from backend.pipeline.matting import finish_cutout
+    roi, _, _ = _alpha_setup(make_scene)
+    ww, wh = roi.work_size
+    rgb_f = np.random.default_rng(41).random((H, W, 3)).astype(np.float32)
+    tri = np.zeros((wh, ww), np.uint8)
+    tri[20:120, 20:120] = 128                    # vành chưa biết nhỏ ở một góc ROI
+    tri[40:100, 40:100] = 255
+    alpha_work = (tri == 255).astype(np.float32) + 0.5 * (tri == 128)
+    real, sizes = roi_mod.guided_filter, []
+    monkeypatch.setattr(roi_mod, "guided_filter",
+                        lambda g, s, *a, **k: (sizes.append(g.size) if s.ndim == 3 else None) or real(g, s, *a, **k))
+    finish_cutout(rgb_f, np.clip(alpha_work, 0, 1), tri, roi)
+    roi_px = (roi.x2 - roi.x1) * (roi.y2 - roi.y1)
+    rgb_calls = [s for s in sizes if s < roi_px]            # lời gọi theo ô, ảnh RGB (F và B)
+    assert rgb_calls and sum(rgb_calls) < 0.5 * roi_px        # F+B cộng lại < nửa ROI (trước: 2 lần ROI)

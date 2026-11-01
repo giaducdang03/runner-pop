@@ -5,8 +5,12 @@ from typing import Optional
 
 import cv2
 import numpy as np
+# Import ở mức module (main thread lúc khởi động): import lười trong nhiều thread cùng lúc
+# gây _DeadlockError / ImportError do pymatting nạp dở.
+from pymatting import estimate_alpha_cf, estimate_alpha_knn, estimate_foreground_ml
 
 from . import accel
+from . import config as C
 from .roi import Roi, upsample_alpha, upsample_rgb
 from .schema import Cutout
 from .trace import Trace
@@ -38,8 +42,6 @@ def matte(rgb_f: np.ndarray, trimap: np.ndarray, method: str = "cf") -> np.ndarr
     method: 'cf' (closed-form, chất lượng cao, chậm hơn) | 'knn' (nhanh hơn)
     Chỉ giải trong ROI quanh vùng unknown để tiết kiệm RAM/thời gian.
     """
-    from pymatting import estimate_alpha_cf, estimate_alpha_knn
-
     h, w = trimap.shape
     ys, xs = np.nonzero(trimap > 0)            # FG hoặc unknown
     if len(xs) == 0:
@@ -77,7 +79,6 @@ def decontaminate(rgb_f: np.ndarray, alpha: np.ndarray):
       - B sạch  -> phần nền sau viền mềm không lẫn độ sáng của người
     Trả về (F, B), cả hai float32 HxWx3.
     """
-    from pymatting import estimate_foreground_ml
     h, w = alpha.shape
     ys, xs = np.nonzero(alpha > 0.001)
     if len(xs) == 0:
@@ -96,14 +97,24 @@ def decontaminate(rgb_f: np.ndarray, alpha: np.ndarray):
     return fg, bg
 
 
+def tighten_alpha(alpha: np.ndarray, lo: float = None, hi: float = None) -> np.ndarray:
+    """Kéo giãn alpha: <= lo -> 0, >= hi -> 1, giữa tuyến tính. Cắt đuôi mờ của vành matting
+    (quầng màu nền / viền nhoè) mà vẫn giữ chuyển tiếp mềm ở giữa; alpha nhị phân không đổi."""
+    lo = C.ALPHA_LO if lo is None else lo
+    hi = C.ALPHA_HI if hi is None else hi
+    a = np.asarray(alpha, np.float32)
+    t = np.clip((a - lo) / max(hi - lo, 1e-6), 0.0, 1.0)
+    return np.where(a >= hi, 1.0, np.where(a <= lo, 0.0, t)).astype(np.float32)
+
+
 def finish_cutout(rgb_f: np.ndarray, alpha_work: np.ndarray, trimap_work: np.ndarray,
                   roi: Roi, trace: Optional[Trace] = None) -> Cutout:
     """Bước cuối chung của mọi engine: nâng α/trimap từ độ phân giải làm việc của `roi`
     về ảnh đầy đủ, khử nhiễm màu + đóng gói.
     `rgb_f`: ảnh ĐẦY ĐỦ float32 0..1; `alpha_work`, `trimap_work`: kích thước `roi.work_size`.
     Ngoài ROI: α = 0, trimap = 0, B = ảnh gốc (FR-90, FR-36)."""
-    alpha = np.clip(upsample_alpha(alpha_work, roi, rgb_f, unknown_work=(trimap_work == 128)),
-                    0.0, 1.0)
+    alpha = tighten_alpha(np.clip(
+        upsample_alpha(alpha_work, roi, rgb_f, unknown_work=(trimap_work == 128)), 0.0, 1.0))
     tri = trimap_work
     if tri.shape[::-1] != roi.full_size:
         tri = cv2.resize(tri, roi.full_size, interpolation=cv2.INTER_NEAREST)
@@ -114,8 +125,11 @@ def finish_cutout(rgb_f: np.ndarray, alpha_work: np.ndarray, trimap_work: np.nda
         # khử nhiễm ở độ phân giải làm việc (FR-93), rồi nâng F/B bằng guided filter
         rgb_work = roi.to_work(rgb_f)
         fg_work, bg_work = decontaminate(rgb_work, alpha_work.astype(np.float32))
-        fg = np.clip(upsample_rgb(fg_work, roi, rgb_f, base=rgb_f), 0.0, 1.0).astype(np.float32)
-        bg = np.clip(upsample_rgb(bg_work, roi, rgb_f, base=rgb_f), 0.0, 1.0).astype(np.float32)
+        # F/B chỉ có ý nghĩa ở vành 0 < α < 1 (ngoài vành bị ghi đè bằng ảnh gốc ngay dưới) -> chỉ
+        # lọc các ô chạm vành, nở vài điểm ảnh cho chắc
+        band = cv2.dilate(((alpha > 0.0) & (alpha < 1.0)).astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+        fg = np.clip(upsample_rgb(fg_work, roi, rgb_f, base=rgb_f, band=band), 0.0, 1.0).astype(np.float32)
+        bg = np.clip(upsample_rgb(bg_work, roi, rgb_f, base=rgb_f, band=band), 0.0, 1.0).astype(np.float32)
         solid = alpha >= 1.0 - 1e-6
         fg[solid] = rgb_f[solid]                 # α = 1 -> F chính là ảnh gốc
         clear = alpha <= 0.0

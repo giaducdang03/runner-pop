@@ -10,7 +10,9 @@ Luồng:
 import base64
 import json
 import os
+import threading
 import time
+from pathlib import Path
 from html import escape
 
 import requests
@@ -42,14 +44,20 @@ def err_msg(r: requests.Response) -> str:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
+def _fetch_options():
+    return api_get("/options").json()          # lỗi thì raise -> st.cache_data không lưu kết quả lỗi
+
+
 def load_options():
-    """Engine và bước tiền xử lý lấy từ backend -> thêm bước mới ở backend là giao diện tự có."""
+    """Engine và bước tiền xử lý lấy từ backend -> thêm bước mới ở backend là giao diện tự có.
+    Backend chưa sẵn sàng (đang khởi động lại) -> danh sách dự phòng, KHÔNG cache để lần rerun sau lấy lại."""
     try:
-        return api_get("/options").json()
+        return _fetch_options()
     except Exception:
         return {"engines": [{"name": "cf", "label": "GrabCut + Closed-form"}], "preprocess": []}
 
 
+_viewer = components.declare_component("bg_viewer", path=str(Path(__file__).parent / "viewer_component"))   # viewer so sánh + thanh cường độ
 OPTS = load_options()
 ENGINE_LABELS = {e["name"]: e["label"] for e in OPTS["engines"]}
 PRE_LABELS = {p["name"]: p["label"] for p in OPTS["preprocess"]}
@@ -60,11 +68,12 @@ PIPELINE_TMPL = """
 <style>
   :root { color-scheme: light dark; }
   body { margin:0; font-family: system-ui, sans-serif; }
-  #row { display:flex; gap:8px; overflow-x:auto; padding:4px 2px 12px; }
+  #row { display:flex; gap:8px; overflow-x:scroll; padding:4px 2px 12px; }
   .card { flex:0 0 220px; border:1px solid rgba(128,128,128,.35); border-radius:10px; padding:8px; box-sizing:border-box; }
   .card .n { font-size:11px; opacity:.65; }
   .card .t { font-weight:600; font-size:13px; margin:2px 0 6px; min-height:34px; }
-  .card img { width:100%; border-radius:6px; display:block; cursor:zoom-in; transition:transform .15s; }
+  /* ảnh dọc (ROI người) không được làm thẻ cao hơn iframe 440px, nếu không thanh cuộn ngang bị cắt mất */
+  .card img { width:100%; max-height:240px; object-fit:contain; border-radius:6px; display:block; cursor:zoom-in; transition:transform .15s; }
   .card img:hover { transform:scale(1.02); }
   .card .none { height:70px; border-radius:6px; background:rgba(128,128,128,.12); display:flex;
                 align-items:center; justify-content:center; font-size:11px; opacity:.6; }
@@ -358,6 +367,7 @@ if go or auto_run:
     if job is not None:
         info = job["result"]
         st.session_state["done"] = info
+        st.session_state["seg_ver"] = st.session_state.get("seg_ver", 0) + 1     # làm mới cache ảnh xem trước / nền đã lọc
         st.session_state["trace"]["segment"] = stages
         st.session_state["assets"] = {
             "orig": base64.b64encode(api_get(f"/session/{sid}/original.jpg").content).decode(),
@@ -365,6 +375,9 @@ if go or auto_run:
             "bg": base64.b64encode(api_get(f"/session/{sid}/background.jpg").content).decode(),
             "alpha": base64.b64encode(api_get(f"/session/{sid}/alpha.png").content).decode(),
         }
+        # Lần chạy tách nền có cấu trúc trang khác (khối tiến độ trực tiếp) -> chạy lại một lần để viewer được tạo trong
+        # cấu trúc "bình thường"; nếu không, lần rerun đầu tiên (vd thả thanh cường độ) sẽ dựng lại iframe viewer và reset trạng thái.
+        st.rerun()
 
 if "assets" not in st.session_state:
     st.stop()
@@ -375,125 +388,142 @@ a = st.session_state["assets"]
 render_pipeline(f"Pipeline 2 · Tách nền ({ENGINE_LABELS.get(info['method'], info['method'])})",
                 st.session_state["trace"]["segment"])
 st.success(f"Xong trong {info['elapsed_s']} s.")
+_det_bib = info.get("bib", "")
+if st.session_state.get("bib_src") != (sid, _det_bib):       # mỗi lần xử lý xong -> nạp lại giá trị đọc được
+    st.session_state["bib_src"] = (sid, _det_bib)
+    st.session_state["bib_value"] = _det_bib
+_top = st.container()          # hàng trên cùng: Số BIB + tải ảnh + PDF (điền ở cuối script, khi đã biết hiệu ứng đang chọn)
+_bib = "".join(ch for ch in st.session_state.get("bib_value", "") if ch.isalnum())
+_bib_prefix = f"BIB_{_bib}" if _bib else ""
+_fc = info.get("focus_confidence")
+if _fc is not None and _fc < OPTS.get("focus_conf_min", 1.3):
+    st.warning("Ảnh này không có phông mờ rõ — kết quả 'mặt phẳng nét' có thể kém tin cậy. Thử engine khác.")
 
-VIEWER = """
-<style>
-  :root { color-scheme: light dark; }
-  body { margin:0; font-family: system-ui, sans-serif; }
-  #bar { display:flex; gap:18px; align-items:center; flex-wrap:wrap; margin:0 0 8px; font-size:14px; }
-  #bar label { display:flex; gap:8px; align-items:center; }
-  #stage { text-align:center; }
-  /* wrap ôm sát canvas để toạ độ kéo thanh luôn khớp ảnh; ảnh dọc bị giới hạn chiều cao để không tràn iframe */
-  #wrap { position:relative; display:inline-block; max-width:100%; user-select:none; touch-action:none; }
-  canvas { display:block; width:auto; height:auto; max-width:100%; max-height:740px; border-radius:6px; }
-  #tag { position:absolute; top:8px; padding:2px 8px; border-radius:4px; font-size:12px;
-         background:rgba(0,0,0,.55); color:#fff; pointer-events:none; }
-  #line { position:absolute; top:0; bottom:0; width:2px; background:#fff; box-shadow:0 0 4px #0008; pointer-events:none; }
-  #knob { position:absolute; top:50%; width:28px; height:28px; margin:-14px 0 0 -13px; border-radius:50%;
-          background:#fff; box-shadow:0 0 6px #0008; pointer-events:none; }
-</style>
-<div id="bar">
-  <label>Cường độ nền đen trắng
-    <input id="s" type="range" min="0" max="100" value="100" style="width:200px"><b id="sv">100%</b></label>
-  <label>Chế độ
-    <select id="mode">
-      <option value="split">So sánh (kéo thanh)</option>
-      <option value="side">Cạnh nhau (trái: trước, phải: sau)</option>
-      <option value="after">Chỉ kết quả</option>
-      <option value="before">Chỉ ảnh gốc</option>
-    </select></label>
-</div>
-<div id="stage"><div id="wrap">
-  <canvas id="cv"></canvas>
-  <div id="tag" style="left:8px">Trước</div>
-  <div id="tag2" class="tag" style="position:absolute;top:8px;right:8px;padding:2px 8px;border-radius:4px;font-size:12px;background:rgba(0,0,0,.55);color:#fff;pointer-events:none">Sau</div>
-  <div id="line"></div><div id="knob"></div>
-</div></div>
-<script>
-const load = src => new Promise(r => { const i = new Image(); i.onload = () => r(i); i.src = src; });
-const px = i => { const c = document.createElement('canvas'); c.width = i.width; c.height = i.height;
-  const x = c.getContext('2d', {willReadFrequently:true}); x.drawImage(i,0,0); return x.getImageData(0,0,i.width,i.height); };
+# ---------------------------------------------------------------- trạng thái bộ lọc nền (đọc trước viewer, lưới đặt dưới viewer)
+BG_FILTERS = OPTS.get("bg_filters") or [{"name": "bw", "label": "Nền đen trắng"}]
+if st.session_state.get("bg_filter") not in {f["name"] for f in BG_FILTERS}:
+    st.session_state["bg_filter"] = "bw"
+bg_filter = st.session_state["bg_filter"]
+bg_color = st.session_state.get("bg_color", "#808080")
+bg_int = 1.0 if bg_filter == "none" else st.session_state.get("bg_intensity", 100) / 100
+_ver = st.session_state.get("seg_ver", 0)
 
-(async () => {
-  const [io, ifg, ibg, ia] = await Promise.all([
-    load("data:image/jpeg;base64,__ORIG__"), load("data:image/png;base64,__FG__"),
-    load("data:image/jpeg;base64,__BG__"), load("data:image/png;base64,__ALPHA__")]);
-  const W = io.width, H = io.height, N = W*H;
-  const F = px(ifg).data, B = px(ibg).data, A = px(ia).data;
-  const gray = new Float32Array(N);
-  for (let i=0;i<N;i++) gray[i] = 0.2126*B[4*i] + 0.7152*B[4*i+1] + 0.0722*B[4*i+2];
+_left, _right = st.columns([5, 3], gap="medium")      # trái: viewer, phải: lưới hiệu ứng
+with _left:
+    _ld_slot = st.empty()    # luôn tạo (kể cả khi trống): vị trí viewer không đổi giữa các lần rerun -> iframe không bị dựng lại
+if st.session_state.get("bgf_key") != (sid, bg_filter, bg_color, _ver):
+    _ld = _ld_slot.progress(0.15, text="Đang áp dụng hiệu ứng…")      # thanh chờ khi lấy nền đã lọc từ backend
+    st.session_state["bgf_img"] = base64.b64encode(api_get(
+        f"/session/{sid}/bgfilter.jpg", params={"filter": bg_filter, "color": bg_color}).content).decode()
+    st.session_state["bgf_key"] = (sid, bg_filter, bg_color, _ver)
+    _ld.progress(1.0, text="Đang ghép ảnh…")
+    _ld_slot.empty()
 
-  const cv = document.getElementById('cv'); cv.width = W; cv.height = H;
-  const ctx = cv.getContext('2d');
-  const out = ctx.createImageData(W, H), D = out.data;
-  const sl = document.getElementById('s'), sv = document.getElementById('sv'), mode = document.getElementById('mode');
-  const line = document.getElementById('line'), knob = document.getElementById('knob'), wrap = document.getElementById('wrap');
-  const tag = document.getElementById('tag'), tag2 = document.getElementById('tag2');
-  let split = 0.5, s = 1.0;
+with _left:
+    _val = _viewer(orig=a["orig"], fg=a["fg"], bg=a["bg"], alpha=a["alpha"], bf=st.session_state["bgf_img"],
+                   ver=f"{sid}:{_ver}", bf_key=f"{bg_filter}:{bg_color}", s=int(round(bg_int * 100)),
+                   show_slider=bg_filter != "none", default=None, key="viewer")
+    if _val is not None:                              # thả thanh cường độ trong viewer -> tải ảnh / PDF dùng đúng cường độ
+        st.session_state["bg_intensity"] = int(_val)
+        bg_int = 1.0 if bg_filter == "none" else int(_val) / 100
 
-  function render() {
-    // cùng công thức với backend: out = a*F + (1-a)*((1-s)*B + s*gray(B))
-    for (let i=0;i<N;i++) {
-      const a = A[4*i]/255, g = gray[i], k = 4*i;
-      D[k]   = a*F[k]   + (1-a)*((1-s)*B[k]   + s*g);
-      D[k+1] = a*F[k+1] + (1-a)*((1-s)*B[k+1] + s*g);
-      D[k+2] = a*F[k+2] + (1-a)*((1-s)*B[k+2] + s*g);
-      D[k+3] = 255;
-    }
-    draw();
-  }
-  function draw() {
-    const m = mode.value;
-    const wantW = m === 'side' ? 2*W : W;
-    if (cv.width !== wantW) cv.width = wantW;          // đổi kích thước canvas sẽ xoá nội dung
-    if (m === 'side') { ctx.drawImage(io, 0, 0); ctx.putImageData(out, W, 0); }
-    else if (m === 'after') ctx.putImageData(out, 0, 0);
-    else if (m === 'before') ctx.drawImage(io, 0, 0);
-    else {
-      ctx.putImageData(out, 0, 0);
-      const x = Math.round(split*W);
-      ctx.save(); ctx.beginPath(); ctx.rect(0, 0, x, H); ctx.clip(); ctx.drawImage(io, 0, 0); ctx.restore();
-    }
-    const showSplit = m === 'split';
-    line.style.display = knob.style.display = showSplit ? '' : 'none';
-    tag.style.display = tag2.style.display = (showSplit || m === 'side') ? '' : 'none';
-    line.style.left = knob.style.left = (split*100) + '%';
-  }
-  sl.addEventListener('input', () => { s = sl.value/100; sv.textContent = sl.value + '%'; render(); });
-  mode.addEventListener('change', draw);
-  const move = e => { const r = wrap.getBoundingClientRect(); split = Math.min(1, Math.max(0, (e.clientX - r.left)/r.width)); draw(); };
-  let drag = false;
-  wrap.addEventListener('pointerdown', e => { drag = true; wrap.setPointerCapture(e.pointerId); move(e); });
-  wrap.addEventListener('pointermove', e => { if (drag) move(e); });
-  wrap.addEventListener('pointerup', () => drag = false);
-  render();
-})();
-</script>
-"""
-html = (VIEWER.replace("__ORIG__", a["orig"]).replace("__FG__", a["fg"])
-        .replace("__BG__", a["bg"]).replace("__ALPHA__", a["alpha"]))
-components.html(html, height=780, scrolling=False)
+# ---------------------------------------------------------------- chỉnh màu nền (cột phải, cuộn trong khung cố định)
+st.markdown(
+    "<style>[class*='st-key-bgf_'] button{padding:.05rem .2rem;min-height:1.6rem;font-size:.74rem}"
+    "[class*='st-key-bgf_'] button p{font-size:.74rem}</style>", unsafe_allow_html=True)
+with _right:
+    st.markdown("**Chỉnh màu nền**")
+    if st.session_state.get("bgf_prev_key") != (sid, bg_color, _ver):
+        st.session_state["bgf_prev"] = {}
+        st.session_state["bgf_prev_key"] = (sid, bg_color, _ver)
+    _prev = st.session_state["bgf_prev"]
+    _todo = [f["name"] for f in BG_FILTERS if f["name"] not in _prev]
+    if _todo:                                             # tải từng ảnh xem trước một, có thanh tiến độ
+        _bar = st.progress(0.0, text="Đang tải ảnh xem trước…")
+        for _k, _n in enumerate(_todo, 1):
+            try:
+                _pv = api_get(f"/session/{sid}/bgfilter_previews", params={"color": bg_color, "names": _n}).json()
+                _it = next((p for p in _pv if p["name"] == _n), None)
+                _prev[_n] = base64.b64decode(_it["image"].split(",", 1)[1]) if _it else b""
+            except Exception:
+                _prev[_n] = b""                           # lỗi -> ô chỉ còn nút, không có ảnh (không thử lại mãi)
+            _bar.progress(_k / len(_todo), text=f"Đang tải ảnh xem trước… {_k}/{len(_todo)}")
+        _bar.empty()
+    _N = 3
+    with st.container(height=470, border=False):          # khung cuộn riêng: trang không dài thêm khi có nhiều hiệu ứng
+        for _row in range(0, len(BG_FILTERS), _N):
+            _cols = st.columns(_N, gap="small")
+            for _col, _f in zip(_cols, BG_FILTERS[_row:_row + _N]):
+                with _col:
+                    if _prev.get(_f["name"]):
+                        st.image(_prev[_f["name"]], use_container_width=True)
+                    if st.button(_f["label"], key=f"bgf_{_f['name']}", use_container_width=True,
+                                 type="primary" if _f["name"] == bg_filter else "secondary"):
+                        st.session_state["bg_filter"] = _f["name"]
+                        st.rerun()
+    if bg_filter == "solid":
+        st.color_picker("Màu nền", bg_color, key="bg_color")
 
-# ---------------------------------------------------------------- tải về + debug
-d1, d2 = st.columns(2)
-with d1:
-    dl_int = st.slider("Cường độ khi tải về", 0, 100, 100, 5, format="%d%%") / 100
-    fmt = st.radio("Định dạng", ["png", "jpeg"], horizontal=True)
-    img = api_get(f"/session/{sid}/compose", params={"intensity": dl_int, "fmt": fmt}).content
-    st.download_button("Tải ảnh kết quả", img, file_name=f"result.{'jpg' if fmt == 'jpeg' else 'png'}",
-                       mime=f"image/{fmt}", use_container_width=True)
-with d2:
-    st.markdown("**Báo cáo PDF**")
-    if st.button("Tạo báo cáo PDF (toàn bộ thông tin + pipeline)", use_container_width=True):
-        with st.spinner("Đang tạo PDF..."):
-            rr = requests.get(f"{API}/session/{sid}/report.pdf", params={"intensity": dl_int}, timeout=120)
-        if rr.status_code == 200:
+# ---------------------------------------------------------------- hàng trên cùng: Số BIB | định dạng | tải ảnh | PDF
+dl_args = {"intensity": bg_int, "filter": bg_filter, "color": bg_color}
+_pdf_ok = st.session_state.get("pdf_key") == (sid, _ver, bg_filter, bg_color, bg_int, _bib)
+_make_pdf = False
+with _top:
+    _cb, _ci, _cp = st.columns([2.6, 1.2, 1.6], gap="small", vertical_alignment="bottom")
+    with _cb:
+        st.text_input("Số BIB" + ("" if _det_bib else " (không đọc được — nhập tay)"), key="bib_value")
+    with _ci, st.popover("Tải ảnh", use_container_width=True):          # bấm -> chọn định dạng rồi tải
+        fmt = st.radio("Định dạng ảnh", ["png", "jpeg"], horizontal=True, key="dl_fmt",
+                       format_func=lambda v: "PNG · không nén" if v == "png" else "JPEG · nhẹ hơn")
+        _img_name = f"{_bib_prefix or 'result'}.{'jpg' if fmt == 'jpeg' else 'png'}"
+        st.caption(f"Tên file: {_img_name}")
+        st.download_button("Tải xuống", api_get(f"/session/{sid}/compose", params={**dl_args, "fmt": fmt}).content,
+                           file_name=_img_name, mime=f"image/{fmt}", type="primary", use_container_width=True)
+    with _cp:
+        _pdf_name = f"{_bib_prefix}_report.pdf" if _bib_prefix else "color_pop_runner_report.pdf"
+        if _pdf_ok:
+            st.download_button("Tải báo cáo PDF", st.session_state["pdf"], file_name=_pdf_name,
+                               mime="application/pdf", type="primary", use_container_width=True,
+                               help=f"Tên file: {_pdf_name}")
+        else:
+            _make_pdf = st.button("Tạo báo cáo PDF", type="primary", use_container_width=True,
+                                  help="Thông tin ảnh, cài đặt, từng bước pipeline và so sánh trước / sau")
+    _pdf_status = st.container()                      # thanh tiến độ / thông báo PDF nằm ngay dưới hàng nút
+
+if _make_pdf:
+    with _pdf_status:
+        # backend không báo tiến độ -> chạy request ở thread phụ, thanh chạy theo thời gian (tiệm cận 95%) tới khi xong
+        _box = {}
+
+        def _fetch_pdf():
+            try:
+                _box["r"] = requests.get(f"{API}/session/{sid}/report.pdf", params={**dl_args, "bib": _bib}, timeout=120)
+            except requests.RequestException as e:
+                _box["err"] = str(e)
+
+        _th = threading.Thread(target=_fetch_pdf, daemon=True)
+        _bar = st.progress(0.0, text="Đang tạo báo cáo PDF…")
+        _t0 = time.time()
+        _th.start()
+        while _th.is_alive():
+            _el = time.time() - _t0
+            _bar.progress(min(0.95, 1 - 0.5 ** (_el / 3)), text=f"Đang tạo báo cáo PDF… {_el:.0f}s")
+            time.sleep(0.2)
+        _bar.empty()
+        rr = _box.get("r")
+        if rr is None:
+            st.error(f"Không tạo được PDF: {_box.get('err', 'không rõ lỗi')}")
+        elif rr.status_code == 200:
             st.session_state["pdf"] = rr.content
+            st.session_state["pdf_key"] = (sid, _ver, bg_filter, bg_color, bg_int, _bib)     # PDF chỉ đúng với hiệu ứng lúc tạo
+            st.rerun()                                # nút chuyển thành "Tải báo cáo PDF"
         else:
             st.error(err_msg(rr))
-    if st.session_state.get("pdf"):
-        st.download_button("Tải báo cáo PDF", st.session_state["pdf"], file_name="color_pop_runner_report.pdf",
-                           mime="application/pdf", use_container_width=True)
-    with st.expander("Debug: alpha & trimap"):
-        st.image(f"{API}/session/{sid}/alpha.png", caption="Alpha matte", use_container_width=True)
-        st.image(f"{API}/session/{sid}/trimap.png", caption="Trimap (xám = vùng unknown)", use_container_width=True)
+elif st.session_state.get("pdf") and not _pdf_ok:
+    with _pdf_status:
+        st.caption("Hiệu ứng hoặc số BIB đã đổi — bấm tạo lại báo cáo PDF để khớp.")
+
+with st.expander("Debug: alpha & trimap"):
+    _e1, _e2 = st.columns(2)
+    _e1.image(f"{API}/session/{sid}/alpha.png", caption="Alpha matte", use_container_width=True)
+    _e2.image(f"{API}/session/{sid}/trimap.png", caption="Trimap (xám = vùng unknown)", use_container_width=True)

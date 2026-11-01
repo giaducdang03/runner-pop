@@ -232,8 +232,26 @@ def device_summary(*stage_lists) -> str:
     return " · ".join(parts) or "-"
 
 
+def with_filter_compose_stage(stages: List[Stage], cutout: P.Cutout, bg_filter: str, color: str,
+                             intensity: float) -> List[Stage]:
+    """Bước "Ghép" được ghi lúc tách nền (chưa biết bộ lọc) -> thay nhãn/ảnh bằng bộ lọc đang áp dụng. Không sửa bản gốc."""
+    from dataclasses import replace
+    from .pipeline.trace import _encode
+    name = P.BG_FILTERS.label(bg_filter) + (f" {color}" if bg_filter == "solid" else "")
+    out = []
+    for s in stages:
+        if s.key == "compose":
+            s = replace(s, label=f"Ghép: người giữ màu, nền {name}",
+                        note=f"out = α·F + (1−α)·((1−s)·B + s·Bf); Bf = {name}, s = {intensity:.0%}",
+                        image=_encode(P.compose(cutout, intensity, bg_filter, color)))
+        out.append(s)
+    return out
+
+
 def build_report(rgb: np.ndarray, scene: P.Scene, cutout: Optional[P.Cutout], meta: dict,
-                 intensity: float = 1.0, engine_labels: Optional[dict] = None) -> bytes:
+                 intensity: float = 1.0, engine_labels: Optional[dict] = None,
+                 bg_filter: str = "bw", color: str = "#808080", bib: Optional[str] = None) -> bytes:
+    """`bib`: số BIB người dùng đã xác nhận/sửa; None -> dùng số đọc được lúc tách nền (meta["bib"])."""
     pdf = _Report()
     pdf.add_page()
     pdf.h1(APP_TITLE, "Báo cáo xử lý")
@@ -270,7 +288,8 @@ def build_report(rgb: np.ndarray, scene: P.Scene, cutout: Optional[P.Cutout], me
             ("Thiết bị", device_summary(scene.trace.stages, cutout.trace.stages if cutout and cutout.trace else None)),
             ("Độ rộng vùng viền", f"{meta.get('band', 0):.1%} kích thước người"),
             *([("Ngưỡng độ nét", f"{meta.get('focus', 0):.0%}")] if method == "focus" else []),
-            ("Cường độ nền đen trắng", f"{intensity:.0%}"),
+            ("Bộ lọc nền", P.BG_FILTERS.label(bg_filter) + (f" ({color})" if bg_filter == "solid" else "")),
+            ("Cường độ hiệu ứng nền", f"{intensity:.0%}"),
             ("Thời gian", f"phát hiện {detect_s:.1f}s · tách nền {seg_s:.1f}s"),
         ])
     else:
@@ -287,11 +306,15 @@ def build_report(rgb: np.ndarray, scene: P.Scene, cutout: Optional[P.Cutout], me
 
     if cutout and cutout.trace:
         pdf.h2(f"5. Pipeline 2 - Tách nền ({labels.get(method, method)})", need=80)
-        pdf.stage_grid(cutout.trace.stages)
+        pdf.stage_grid(with_filter_compose_stage(cutout.trace.stages, cutout, bg_filter, color, intensity))
 
         pdf.add_page()
         pdf.h2("6. Kết quả: trước / sau")
-        after = P.compose(cutout, intensity)
+        bib_text = (meta.get("bib", "") if bib is None else bib) or ""
+        pdf.set_font("vn", "B", 14)
+        pdf.cell(0, 8, f"Số BIB: {bib_text}" if bib_text else "Số BIB: không đọc được", new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(1)
+        after = P.compose(cutout, intensity, bg_filter, color)
         half = (pdf.content_w - 6) / 2
         y0 = pdf.get_y()
         ih = half * h / w
@@ -301,7 +324,7 @@ def build_report(rgb: np.ndarray, scene: P.Scene, cutout: Optional[P.Cutout], me
         pdf.set_font("vn", "", 9)
         pdf.cell(half, 5, "Trước (ảnh gốc)", align="C")
         pdf.set_x(pdf.l_margin + half + 6)
-        pdf.cell(half, 5, "Sau (giữ màu người, nền đen trắng)", align="C")
+        pdf.cell(half, 5, f"Sau (giữ màu người, nền {P.BG_FILTERS.label(bg_filter)})", align="C")
         pdf.set_y(y0 + ih + 8)
 
         pdf.ensure(half * h / w + 14)

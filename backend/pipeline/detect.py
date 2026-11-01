@@ -219,7 +219,7 @@ def detect_scene(rgb: np.ndarray, preprocess: str = "auto",
         if persons:
             break
 
-    suggested = suggest_person(Scene(rgb=rgb, persons=persons)) if persons else 0
+    suggested = suggest_person(Scene(rgb=rgb, persons=persons, quality=qd)) if persons else 0
     if persons:
         with trace.stage("select", "Tự chọn người chạy chính",
                          note=f"#{suggested}: to + gần tâm + nét + conf cao") as s:

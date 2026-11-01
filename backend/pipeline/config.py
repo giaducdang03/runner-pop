@@ -6,7 +6,7 @@ from pathlib import Path
 os.environ.setdefault("YOLO_AUTOINSTALL", "False")
 
 # --- ảnh làm việc ---------------------------------------------------------
-MAX_SIDE = 1280            # ảnh được thu nhỏ về cạnh dài này để chạy (CPU)
+MAX_SIDE = int(os.environ.get("MAX_SIDE", "2560"))   # ảnh được thu nhỏ về cạnh dài này để chạy; ROI vẫn xử lý ≤ WORK_MAX_SIDE
 
 # --- phát hiện người ------------------------------------------------------
 YOLO_IMGSZ = 640
@@ -33,6 +33,19 @@ WORK_MAX_SIDE = 640        # cạnh dài tối đa của ROI khi chạy engine (
 GUIDED_RADIUS = 8          # bán kính guided filter (px, ở độ phân giải làm việc)
 GUIDED_EPS = 1e-4          # eps của guided filter
 FULLRES = os.environ.get("FULLRES", "0") == "1"   # bật = bỏ ROI, chạy toàn ảnh gốc
+ALPHA_LO = 0.10          # alpha dưới mức này -> 0 (cắt đuôi loá quanh người)
+ALPHA_HI = 0.90          # alpha trên mức này -> 1 (dùng màu gốc sát viền hơn)
+
+# --- bản đồ nét (engine focus + chọn người) ---------------------------------
+FOCUS_METHOD = os.environ.get("FOCUS_METHOD", "laplacian")   # laplacian | freq | hybrid
+FOCUS_BLOCK = 16           # cạnh khối DCT (px, ở độ phân giải đo nét)
+FOCUS_STRIDE = 8           # bước trượt khối (khối chồng 50%)
+FOCUS_MAX_SIDE = 640       # cạnh dài tối đa khi đo nét theo tần số
+FOCUS_HYBRID_W = 0.5       # trọng số của bản đồ tần số trong chế độ hybrid
+FOCUS_CONF_MIN = 1.3       # tỉ lệ nét người/nền dưới mức này = ảnh không có phông mờ rõ
+FOCUS_OTHER_MIN = 0.85     # người khác chỉ được giữ màu khi (nét/nét người chọn) × (tỉ lệ mịn/thô) ≥ mức này
+FOCUS_RIM_SHARP = 0.35      # điểm có độ nét ≥ mức này × độ nét người chọn được coi là "nét" khi cắt phần lẫn mờ
+FOCUS_RIM_FRAC = 0.30       # phần lẫn mờ được cắt sâu tối đa tỉ lệ này × bề ngang người từ rìa mask
 
 # --- gia tốc phần cứng (chọn bằng biến môi trường khi chạy app) ---------------
 ACCEL_DEVICE = os.environ.get("ACCEL_DEVICE", "auto")        # auto|cpu|gpu
