@@ -563,9 +563,12 @@ with d2:
             rr = requests.get(f"{API}/session/{sid}/report.pdf", params=dl_args, timeout=120)
         if rr.status_code == 200:
             st.session_state["pdf"] = rr.content
+            st.session_state["pdf_key"] = (sid, _ver, bg_filter, bg_color, bg_int)     # PDF chỉ đúng với hiệu ứng lúc tạo
         else:
             st.error(err_msg(rr))
-    if st.session_state.get("pdf"):
+    if st.session_state.get("pdf") and st.session_state.get("pdf_key") != (sid, _ver, bg_filter, bg_color, bg_int):
+        st.caption("Hiệu ứng đã đổi — bấm tạo lại báo cáo để PDF khớp.")
+    elif st.session_state.get("pdf"):
         st.download_button("Tải báo cáo PDF", st.session_state["pdf"], file_name=f"{_bib_prefix}_report.pdf" if _bib_prefix else "color_pop_runner_report.pdf",
                            mime="application/pdf", use_container_width=True)
     with st.expander("Debug: alpha & trimap"):

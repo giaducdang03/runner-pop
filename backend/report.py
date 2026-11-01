@@ -232,6 +232,22 @@ def device_summary(*stage_lists) -> str:
     return " · ".join(parts) or "-"
 
 
+def with_filter_compose_stage(stages: List[Stage], cutout: P.Cutout, bg_filter: str, color: str,
+                             intensity: float) -> List[Stage]:
+    """Bước "Ghép" được ghi lúc tách nền (chưa biết bộ lọc) -> thay nhãn/ảnh bằng bộ lọc đang áp dụng. Không sửa bản gốc."""
+    from dataclasses import replace
+    from .pipeline.trace import _encode
+    name = P.BG_FILTERS.label(bg_filter) + (f" {color}" if bg_filter == "solid" else "")
+    out = []
+    for s in stages:
+        if s.key == "compose":
+            s = replace(s, label=f"Ghép: người giữ màu, nền {name}",
+                        note=f"out = α·F + (1−α)·((1−s)·B + s·Bf); Bf = {name}, s = {intensity:.0%}",
+                        image=_encode(P.compose(cutout, intensity, bg_filter, color)))
+        out.append(s)
+    return out
+
+
 def build_report(rgb: np.ndarray, scene: P.Scene, cutout: Optional[P.Cutout], meta: dict,
                  intensity: float = 1.0, engine_labels: Optional[dict] = None,
                  bg_filter: str = "bw", color: str = "#808080") -> bytes:
@@ -289,7 +305,7 @@ def build_report(rgb: np.ndarray, scene: P.Scene, cutout: Optional[P.Cutout], me
 
     if cutout and cutout.trace:
         pdf.h2(f"5. Pipeline 2 - Tách nền ({labels.get(method, method)})", need=80)
-        pdf.stage_grid(cutout.trace.stages)
+        pdf.stage_grid(with_filter_compose_stage(cutout.trace.stages, cutout, bg_filter, color, intensity))
 
         pdf.add_page()
         pdf.h2("6. Kết quả: trước / sau")
