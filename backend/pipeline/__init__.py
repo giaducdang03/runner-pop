@@ -12,6 +12,7 @@ Pipeline tách người chạy khỏi nền (CPU-only), chia thành các giai đ
 
 Phần nặng chạy MỘT lần, kết quả đóng gói trong `Cutout`. Slider cường độ chỉ gọi `compose()`.
 """
+from .bgfilter import BG_FILTERS, apply_bg_filter
 from .bib import read_bib
 from .compose import alpha_to_png, compose
 from .detect import detect_scene
@@ -26,7 +27,7 @@ from .trace import Trace
 __all__ = [
     "Cutout", "Person", "Scene", "SegParams", "Trace",
     "decode_image", "resize_to_max_side", "detect_scene", "build_cutout",
-    "compose", "alpha_to_png", "read_bib", "available_engines", "available_preprocess", "engine_names", "suggest_person",
+    "compose", "alpha_to_png", "read_bib", "BG_FILTERS", "apply_bg_filter", "available_engines", "available_preprocess", "engine_names", "suggest_person",
 ]
 
 

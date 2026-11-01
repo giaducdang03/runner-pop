@@ -63,3 +63,4 @@ class Cutout:
     background: np.ndarray   # float32 HxWx3, RGB, 0..1  (nền thật ước lượng, không lẫn màu người)
     trimap: np.ndarray       # uint8 HxW (0 / 128 / 255) - để debug
     trace: Optional[Trace] = field(default=None, repr=False)
+    filtered: Dict[tuple, np.ndarray] = field(default_factory=dict, repr=False)  # cache nền đã lọc theo (bộ lọc, màu)
