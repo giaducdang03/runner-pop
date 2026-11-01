@@ -170,7 +170,7 @@ Trạng thái: ✔ = đã triển khai.
 | ID | Yêu cầu | TT |
 |---|---|---|
 | FR-40 | Công thức ghép: `out = α·F + (1−α)·((1−s)·B + s·Bf)`, s ∈ [0,1] là cường độ, `Bf` là nền đã lọc (mục 4.14; bộ lọc `bw` cho `Bf = gray(B)` như bản gốc); frontend và backend dùng cùng công thức. | ✔ (mở rộng ở 4.14) |
-| FR-41 | Thanh cường độ đổi kết quả trong trình duyệt, không chạy lại pipeline tách nền. Từ mục 4.14, thanh là một thanh cường độ duy nhất dưới lưới bộ lọc và cập nhật khi người dùng thả thanh (không còn cập nhật liên tục khi kéo). | ✔ (điều chỉnh ở 4.14) |
+| FR-41 | Thanh cường độ nằm trong khung xem ảnh (ngay dưới ảnh), đổi kết quả tức thì trong trình duyệt khi kéo, không gọi lại backend và không chạy lại pipeline tách nền. Khi thả thanh, viewer báo giá trị về Python để ảnh tải về và PDF dùng đúng cường độ. | ✔ (điều chỉnh ở 4.14) |
 | FR-42 | Chế độ xem: so sánh kéo thanh, cạnh nhau, chỉ kết quả, chỉ ảnh gốc; ảnh dọc không bị cắt khỏi khung. | ✔ |
 | FR-43 | Tải ảnh kết quả PNG hoặc JPEG ở cường độ chọn trước. | ✔ |
 | FR-44 | Xem ảnh debug: alpha matte và trimap. | ✔ |
@@ -221,7 +221,7 @@ Sau khi tách người, nền bên dưới có thể áp các bộ lọc khác n
 | FR-134 | Viewer tải `Bf` một lần mỗi lần đổi bộ lọc và chỉ trộn `B` với `Bf` trong trình duyệt (không tính bộ lọc trong JS). Cường độ 0 cho ra nền gốc. | ✔ |
 | FR-135 | `/compose` và `/report.pdf` nhận `filter`, `color` (mặc định `bw`, `#808080`); báo cáo ghi tên bộ lọc đã dùng. Không truyền thì kết quả giống bản trước. | ✔ |
 | FR-136 | Đổi bộ lọc không chạy lại bất kỳ bước nào của pipeline tách nền và không thêm bước vào sơ đồ pipeline. | ✔ |
-| FR-137 | Giao diện chọn bộ lọc: viewer ở cột trái và lưới 3 cột các ô xem trước ở cột phải (khung cuộn riêng, không làm trang dài thêm) để vừa chọn vừa thấy kết quả không cần cuộn trang; các ô xem trước (ảnh thu nhỏ do backend dựng từ chính cutout, cường độ đầy đủ, cache theo cutout); ảnh xem trước tải từng ô một kèm thanh tiến độ khi chưa có; bấm ô để chọn, ô đang chọn nổi bật; có ô "Ảnh gốc"; chọn `solid` thì hiện ô chọn màu. Một thanh cường độ duy nhất dùng chung cho viewer, ảnh tải về và PDF. | ✔ |
+| FR-137 | Giao diện chọn bộ lọc: viewer ở cột trái và lưới 3 cột các ô xem trước ở cột phải (khung cuộn riêng, không làm trang dài thêm) để vừa chọn vừa thấy kết quả không cần cuộn trang; các ô xem trước (ảnh thu nhỏ do backend dựng từ chính cutout, cường độ đầy đủ, cache theo cutout); ảnh xem trước tải từng ô một kèm thanh tiến độ khi chưa có; bấm ô để chọn, ô đang chọn nổi bật; có ô "Ảnh gốc"; chọn `solid` thì hiện ô chọn màu. Viewer là component riêng (`frontend/viewer_component`) chứa cả thanh cường độ; một giá trị cường độ duy nhất dùng chung cho viewer, ảnh tải về và PDF. Nút "Tải ảnh" mở hộp chọn định dạng (PNG/JPEG) rồi mới tải. | ✔ |
 
 ### 4.15 Nhận diện số BIB
 

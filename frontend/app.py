@@ -12,6 +12,7 @@ import json
 import os
 import threading
 import time
+from pathlib import Path
 from html import escape
 
 import requests
@@ -56,6 +57,7 @@ def load_options():
         return {"engines": [{"name": "cf", "label": "GrabCut + Closed-form"}], "preprocess": []}
 
 
+_viewer = components.declare_component("bg_viewer", path=str(Path(__file__).parent / "viewer_component"))   # viewer so sánh + thanh cường độ
 OPTS = load_options()
 ENGINE_LABELS = {e["name"]: e["label"] for e in OPTS["engines"]}
 PRE_LABELS = {p["name"]: p["label"] for p in OPTS["preprocess"]}
@@ -413,108 +415,13 @@ if st.session_state.get("bgf_key") != (sid, bg_filter, bg_color, _ver):
         _ld.progress(1.0, text="Đang ghép ảnh…")
         _ld.empty()
 
-VIEWER = """
-<style>
-  :root { color-scheme: light dark; }
-  body { margin:0; font-family: system-ui, sans-serif; }
-  #bar { display:flex; gap:18px; align-items:center; flex-wrap:wrap; margin:0 0 8px; font-size:14px; }
-  #bar label { display:flex; gap:8px; align-items:center; }
-  #ld { height:4px; border-radius:2px; background:rgba(128,128,128,.25); overflow:hidden; margin:0 0 8px; }
-  #ld div { height:100%; width:35%; border-radius:2px; background:#f5a623; animation:ld 1s ease-in-out infinite; }
-  @keyframes ld { 0% { margin-left:-35%; } 100% { margin-left:100%; } }
-  #stage { text-align:center; }
-  /* wrap ôm sát canvas để toạ độ kéo thanh luôn khớp ảnh; ảnh dọc bị giới hạn chiều cao để không tràn iframe */
-  #wrap { position:relative; display:inline-block; max-width:100%; user-select:none; touch-action:none; }
-  canvas { display:block; width:auto; height:auto; max-width:100%; max-height:540px; border-radius:6px; }
-  #tag { position:absolute; top:8px; padding:2px 8px; border-radius:4px; font-size:12px;
-         background:rgba(0,0,0,.55); color:#fff; pointer-events:none; }
-  #line { position:absolute; top:0; bottom:0; width:2px; background:#fff; box-shadow:0 0 4px #0008; pointer-events:none; }
-  #knob { position:absolute; top:50%; width:28px; height:28px; margin:-14px 0 0 -13px; border-radius:50%;
-          background:#fff; box-shadow:0 0 6px #0008; pointer-events:none; }
-</style>
-<div id="ld"><div></div></div>
-<div id="bar">
-  <label>Chế độ
-    <select id="mode">
-      <option value="split">So sánh (kéo thanh)</option>
-      <option value="side">Cạnh nhau (trái: trước, phải: sau)</option>
-      <option value="after">Chỉ kết quả</option>
-      <option value="before">Chỉ ảnh gốc</option>
-    </select></label>
-</div>
-<div id="stage"><div id="wrap">
-  <canvas id="cv"></canvas>
-  <div id="tag" style="left:8px">Trước</div>
-  <div id="tag2" class="tag" style="position:absolute;top:8px;right:8px;padding:2px 8px;border-radius:4px;font-size:12px;background:rgba(0,0,0,.55);color:#fff;pointer-events:none">Sau</div>
-  <div id="line"></div><div id="knob"></div>
-</div></div>
-<script>
-const load = src => new Promise(r => { const i = new Image(); i.onload = () => r(i); i.src = src; });
-const px = i => { const c = document.createElement('canvas'); c.width = i.width; c.height = i.height;
-  const x = c.getContext('2d', {willReadFrequently:true}); x.drawImage(i,0,0); return x.getImageData(0,0,i.width,i.height); };
-
-(async () => {
-  const [io, ifg, ibg, ia, ibf] = await Promise.all([
-    load("data:image/jpeg;base64,__ORIG__"), load("data:image/png;base64,__FG__"),
-    load("data:image/jpeg;base64,__BG__"), load("data:image/png;base64,__ALPHA__"),
-    load("data:image/jpeg;base64,__BF__")]);
-  const W = io.width, H = io.height, N = W*H;
-  const F = px(ifg).data, B = px(ibg).data, A = px(ia).data, BF = px(ibf).data;   // BF: nền đã lọc (bộ lọc chọn ở lưới)
-
-  const cv = document.getElementById('cv'); cv.width = W; cv.height = H;
-  const ctx = cv.getContext('2d');
-  const out = ctx.createImageData(W, H), D = out.data;
-  const mode = document.getElementById('mode');
-  const line = document.getElementById('line'), knob = document.getElementById('knob'), wrap = document.getElementById('wrap');
-  const tag = document.getElementById('tag'), tag2 = document.getElementById('tag2');
-  let split = 0.5, s = __S__;
-
-  function render() {
-    // cùng công thức với backend: out = a*F + (1-a)*((1-s)*B + s*Bf)
-    for (let i=0;i<N;i++) {
-      const a = A[4*i]/255, k = 4*i;
-      D[k]   = a*F[k]   + (1-a)*((1-s)*B[k]   + s*BF[k]);
-      D[k+1] = a*F[k+1] + (1-a)*((1-s)*B[k+1] + s*BF[k+1]);
-      D[k+2] = a*F[k+2] + (1-a)*((1-s)*B[k+2] + s*BF[k+2]);
-      D[k+3] = 255;
-    }
-    draw();
-  }
-  function draw() {
-    const m = mode.value;
-    const wantW = m === 'side' ? 2*W : W;
-    if (cv.width !== wantW) cv.width = wantW;          // đổi kích thước canvas sẽ xoá nội dung
-    if (m === 'side') { ctx.drawImage(io, 0, 0); ctx.putImageData(out, W, 0); }
-    else if (m === 'after') ctx.putImageData(out, 0, 0);
-    else if (m === 'before') ctx.drawImage(io, 0, 0);
-    else {
-      ctx.putImageData(out, 0, 0);
-      const x = Math.round(split*W);
-      ctx.save(); ctx.beginPath(); ctx.rect(0, 0, x, H); ctx.clip(); ctx.drawImage(io, 0, 0); ctx.restore();
-    }
-    const showSplit = m === 'split';
-    line.style.display = knob.style.display = showSplit ? '' : 'none';
-    tag.style.display = tag2.style.display = (showSplit || m === 'side') ? '' : 'none';
-    line.style.left = knob.style.left = (split*100) + '%';
-  }
-  mode.addEventListener('change', draw);
-  const move = e => { const r = wrap.getBoundingClientRect(); split = Math.min(1, Math.max(0, (e.clientX - r.left)/r.width)); draw(); };
-  let drag = false;
-  wrap.addEventListener('pointerdown', e => { drag = true; wrap.setPointerCapture(e.pointerId); move(e); });
-  wrap.addEventListener('pointermove', e => { if (drag) move(e); });
-  wrap.addEventListener('pointerup', () => drag = false);
-  render();
-  document.getElementById('ld').style.display = 'none';
-})();
-</script>
-"""
-html = (VIEWER.replace("__ORIG__", a["orig"]).replace("__FG__", a["fg"])
-        .replace("__BG__", a["bg"]).replace("__ALPHA__", a["alpha"])
-        .replace("__BF__", st.session_state["bgf_img"]).replace("__S__", f"{bg_int:.3f}"))
 with _left:
-    components.html(html, height=620, scrolling=False)
-    if bg_filter != "none":
-        st.slider("Cường độ hiệu ứng", 0, 100, 100, 5, format="%d%%", key="bg_intensity")
+    _val = _viewer(orig=a["orig"], fg=a["fg"], bg=a["bg"], alpha=a["alpha"], bf=st.session_state["bgf_img"],
+                   ver=f"{sid}:{_ver}", bf_key=f"{bg_filter}:{bg_color}", s=int(round(bg_int * 100)),
+                   show_slider=bg_filter != "none", default=None, key="viewer")
+    if _val is not None:                              # thả thanh cường độ trong viewer -> tải ảnh / PDF dùng đúng cường độ
+        st.session_state["bg_intensity"] = int(_val)
+        bg_int = 1.0 if bg_filter == "none" else int(_val) / 100
 
 # ---------------------------------------------------------------- chỉnh màu nền (cột phải, cuộn trong khung cố định)
 st.markdown(
@@ -558,17 +465,16 @@ dl_args = {"intensity": bg_int, "filter": bg_filter, "color": bg_color}
 _pdf_ok = st.session_state.get("pdf_key") == (sid, _ver, bg_filter, bg_color, bg_int)
 _make_pdf = False
 with _top:
-    _cb, _cf, _ci, _cp = st.columns([2.4, 1.1, 1.2, 1.5], gap="small", vertical_alignment="bottom")
+    _cb, _ci, _cp = st.columns([2.6, 1.2, 1.6], gap="small", vertical_alignment="bottom")
     with _cb:
         st.text_input("Số BIB" + ("" if _det_bib else " (không đọc được — nhập tay)"), key="bib_value")
-    with _cf:
-        fmt = st.selectbox("Định dạng ảnh", ["png", "jpeg"], key="dl_fmt",
-                           format_func=lambda v: "PNG" if v == "png" else "JPEG")
-    with _ci:
+    with _ci, st.popover("Tải ảnh", use_container_width=True):          # bấm -> chọn định dạng rồi tải
+        fmt = st.radio("Định dạng ảnh", ["png", "jpeg"], horizontal=True, key="dl_fmt",
+                       format_func=lambda v: "PNG · không nén" if v == "png" else "JPEG · nhẹ hơn")
         _img_name = f"{_bib_prefix or 'result'}.{'jpg' if fmt == 'jpeg' else 'png'}"
-        st.download_button("Tải ảnh", api_get(f"/session/{sid}/compose", params={**dl_args, "fmt": fmt}).content,
-                           file_name=_img_name, mime=f"image/{fmt}", type="primary", use_container_width=True,
-                           help=f"Tên file: {_img_name} · hiệu ứng và cường độ đang chọn")
+        st.caption(f"Tên file: {_img_name}")
+        st.download_button("Tải xuống", api_get(f"/session/{sid}/compose", params={**dl_args, "fmt": fmt}).content,
+                           file_name=_img_name, mime=f"image/{fmt}", type="primary", use_container_width=True)
     with _cp:
         _pdf_name = f"{_bib_prefix}_report.pdf" if _bib_prefix else "color_pop_runner_report.pdf"
         if _pdf_ok:
