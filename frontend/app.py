@@ -406,14 +406,15 @@ bg_int = 1.0 if bg_filter == "none" else st.session_state.get("bg_intensity", 10
 _ver = st.session_state.get("seg_ver", 0)
 
 _left, _right = st.columns([5, 3], gap="medium")      # trái: viewer, phải: lưới hiệu ứng
+with _left:
+    _ld_slot = st.empty()    # luôn tạo (kể cả khi trống): vị trí viewer không đổi giữa các lần rerun -> iframe không bị dựng lại
 if st.session_state.get("bgf_key") != (sid, bg_filter, bg_color, _ver):
-    with _left:
-        _ld = st.progress(0.15, text="Đang áp dụng hiệu ứng…")      # thanh chờ khi lấy nền đã lọc từ backend
-        st.session_state["bgf_img"] = base64.b64encode(api_get(
-            f"/session/{sid}/bgfilter.jpg", params={"filter": bg_filter, "color": bg_color}).content).decode()
-        st.session_state["bgf_key"] = (sid, bg_filter, bg_color, _ver)
-        _ld.progress(1.0, text="Đang ghép ảnh…")
-        _ld.empty()
+    _ld = _ld_slot.progress(0.15, text="Đang áp dụng hiệu ứng…")      # thanh chờ khi lấy nền đã lọc từ backend
+    st.session_state["bgf_img"] = base64.b64encode(api_get(
+        f"/session/{sid}/bgfilter.jpg", params={"filter": bg_filter, "color": bg_color}).content).decode()
+    st.session_state["bgf_key"] = (sid, bg_filter, bg_color, _ver)
+    _ld.progress(1.0, text="Đang ghép ảnh…")
+    _ld_slot.empty()
 
 with _left:
     _val = _viewer(orig=a["orig"], fg=a["fg"], bg=a["bg"], alpha=a["alpha"], bf=st.session_state["bgf_img"],
