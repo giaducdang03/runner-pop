@@ -12,14 +12,16 @@ def to_gray3(rgb_f: np.ndarray) -> np.ndarray:
     return np.repeat(g[..., None], 3, axis=2)
 
 
-def compose(c: Cutout, intensity: float = 1.0) -> np.ndarray:
+def compose(c: Cutout, intensity: float = 1.0, bg_filter: str = "bw", color: str = "#808080") -> np.ndarray:
     """
-    intensity ∈ [0,1]: 0 = gần như ảnh gốc (chỉ viền được khử nhiễm), 1 = nền đen trắng hoàn toàn.
-    Trả về uint8 RGB.
+    out = α·F + (1−α)·((1−s)·B + s·Bf), với Bf là nền đã lọc bằng `bg_filter` (xem bgfilter.py).
+    intensity ∈ [0,1]: 0 = nền gốc (chỉ viền được khử nhiễm), 1 = nền lọc hoàn toàn.
+    Mặc định "bw" cho kết quả giống hệt bản đen trắng trước đây. Trả về uint8 RGB.
     """
+    from .bgfilter import apply_bg_filter      # import muộn: bgfilter dùng to_gray3 của module này
     s = float(np.clip(intensity, 0.0, 1.0))
-    gray = to_gray3(c.background)
-    bg = (1.0 - s) * c.background + s * gray
+    bf = apply_bg_filter(c, bg_filter, color)
+    bg = (1.0 - s) * c.background + s * bf
     a = c.alpha[..., None]
     out = a * c.foreground + (1.0 - a) * bg
     return (np.clip(out, 0, 1) * 255.0 + 0.5).astype(np.uint8)
