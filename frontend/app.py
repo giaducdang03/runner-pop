@@ -43,10 +43,15 @@ def err_msg(r: requests.Response) -> str:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
+def _fetch_options():
+    return api_get("/options").json()          # lỗi thì raise -> st.cache_data không lưu kết quả lỗi
+
+
 def load_options():
-    """Engine và bước tiền xử lý lấy từ backend -> thêm bước mới ở backend là giao diện tự có."""
+    """Engine và bước tiền xử lý lấy từ backend -> thêm bước mới ở backend là giao diện tự có.
+    Backend chưa sẵn sàng (đang khởi động lại) -> danh sách dự phòng, KHÔNG cache để lần rerun sau lấy lại."""
     try:
-        return api_get("/options").json()
+        return _fetch_options()
     except Exception:
         return {"engines": [{"name": "cf", "label": "GrabCut + Closed-form"}], "preprocess": []}
 
