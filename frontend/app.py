@@ -397,10 +397,15 @@ bg_color = st.session_state.get("bg_color", "#808080")
 bg_int = 1.0 if bg_filter == "none" else st.session_state.get("bg_intensity", 100) / 100
 _ver = st.session_state.get("seg_ver", 0)
 
+_left, _right = st.columns([5, 3], gap="medium")      # trái: viewer, phải: lưới hiệu ứng
 if st.session_state.get("bgf_key") != (sid, bg_filter, bg_color, _ver):
-    st.session_state["bgf_img"] = base64.b64encode(api_get(
-        f"/session/{sid}/bgfilter.jpg", params={"filter": bg_filter, "color": bg_color}).content).decode()
-    st.session_state["bgf_key"] = (sid, bg_filter, bg_color, _ver)
+    with _left:
+        _ld = st.progress(0.15, text="Đang áp dụng hiệu ứng…")      # thanh chờ khi lấy nền đã lọc từ backend
+        st.session_state["bgf_img"] = base64.b64encode(api_get(
+            f"/session/{sid}/bgfilter.jpg", params={"filter": bg_filter, "color": bg_color}).content).decode()
+        st.session_state["bgf_key"] = (sid, bg_filter, bg_color, _ver)
+        _ld.progress(1.0, text="Đang ghép ảnh…")
+        _ld.empty()
 
 VIEWER = """
 <style>
@@ -408,6 +413,9 @@ VIEWER = """
   body { margin:0; font-family: system-ui, sans-serif; }
   #bar { display:flex; gap:18px; align-items:center; flex-wrap:wrap; margin:0 0 8px; font-size:14px; }
   #bar label { display:flex; gap:8px; align-items:center; }
+  #ld { height:4px; border-radius:2px; background:rgba(128,128,128,.25); overflow:hidden; margin:0 0 8px; }
+  #ld div { height:100%; width:35%; border-radius:2px; background:#f5a623; animation:ld 1s ease-in-out infinite; }
+  @keyframes ld { 0% { margin-left:-35%; } 100% { margin-left:100%; } }
   #stage { text-align:center; }
   /* wrap ôm sát canvas để toạ độ kéo thanh luôn khớp ảnh; ảnh dọc bị giới hạn chiều cao để không tràn iframe */
   #wrap { position:relative; display:inline-block; max-width:100%; user-select:none; touch-action:none; }
@@ -418,6 +426,7 @@ VIEWER = """
   #knob { position:absolute; top:50%; width:28px; height:28px; margin:-14px 0 0 -13px; border-radius:50%;
           background:#fff; box-shadow:0 0 6px #0008; pointer-events:none; }
 </style>
+<div id="ld"><div></div></div>
 <div id="bar">
   <label>Chế độ
     <select id="mode">
@@ -489,13 +498,13 @@ const px = i => { const c = document.createElement('canvas'); c.width = i.width;
   wrap.addEventListener('pointermove', e => { if (drag) move(e); });
   wrap.addEventListener('pointerup', () => drag = false);
   render();
+  document.getElementById('ld').style.display = 'none';
 })();
 </script>
 """
 html = (VIEWER.replace("__ORIG__", a["orig"]).replace("__FG__", a["fg"])
         .replace("__BG__", a["bg"]).replace("__ALPHA__", a["alpha"])
         .replace("__BF__", st.session_state["bgf_img"]).replace("__S__", f"{bg_int:.3f}"))
-_left, _right = st.columns([5, 3], gap="medium")
 with _left:
     components.html(html, height=620, scrolling=False)
 
