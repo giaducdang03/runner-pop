@@ -387,7 +387,7 @@ _det_bib = info.get("bib", "")
 if st.session_state.get("bib_src") != (sid, _det_bib):       # mỗi lần xử lý xong -> nạp lại giá trị đọc được
     st.session_state["bib_src"] = (sid, _det_bib)
     st.session_state["bib_value"] = _det_bib
-st.text_input("Số BIB" + ("" if _det_bib else " (không đọc được tự động — nhập tay nếu cần)"), key="bib_value")
+_top = st.container()          # hàng trên cùng: Số BIB + tải ảnh + PDF (điền ở cuối script, khi đã biết hiệu ứng đang chọn)
 _bib = "".join(ch for ch in st.session_state.get("bib_value", "") if ch.isalnum())
 _bib_prefix = f"BIB_{_bib}" if _bib else ""
 _fc = info.get("focus_confidence")
@@ -513,6 +513,8 @@ html = (VIEWER.replace("__ORIG__", a["orig"]).replace("__FG__", a["fg"])
         .replace("__BF__", st.session_state["bgf_img"]).replace("__S__", f"{bg_int:.3f}"))
 with _left:
     components.html(html, height=620, scrolling=False)
+    if bg_filter != "none":
+        st.slider("Cường độ hiệu ứng", 0, 100, 100, 5, format="%d%%", key="bg_intensity")
 
 # ---------------------------------------------------------------- chỉnh màu nền (cột phải, cuộn trong khung cố định)
 st.markdown(
@@ -548,38 +550,38 @@ with _right:
                                  type="primary" if _f["name"] == bg_filter else "secondary"):
                         st.session_state["bg_filter"] = _f["name"]
                         st.rerun()
-    if bg_filter != "none":
-        st.slider("Cường độ hiệu ứng", 0, 100, 100, 5, format="%d%%", key="bg_intensity")
     if bg_filter == "solid":
         st.color_picker("Màu nền", bg_color, key="bg_color")
 
-# ---------------------------------------------------------------- xuất kết quả (ảnh + PDF) + debug
-dl_int = bg_int                                       # cùng một thanh cường độ với viewer
-dl_args = {"intensity": dl_int, "filter": bg_filter, "color": bg_color}
-_flabel = next((f["label"] for f in BG_FILTERS if f["name"] == bg_filter), bg_filter)
+# ---------------------------------------------------------------- hàng trên cùng: Số BIB | định dạng | tải ảnh | PDF
+dl_args = {"intensity": bg_int, "filter": bg_filter, "color": bg_color}
 _pdf_ok = st.session_state.get("pdf_key") == (sid, _ver, bg_filter, bg_color, bg_int)
+_make_pdf = False
+with _top:
+    _cb, _cf, _ci, _cp = st.columns([2.4, 1.1, 1.2, 1.5], gap="small", vertical_alignment="bottom")
+    with _cb:
+        st.text_input("Số BIB" + ("" if _det_bib else " (không đọc được — nhập tay)"), key="bib_value")
+    with _cf:
+        fmt = st.selectbox("Định dạng ảnh", ["png", "jpeg"], key="dl_fmt",
+                           format_func=lambda v: "PNG" if v == "png" else "JPEG")
+    with _ci:
+        _img_name = f"{_bib_prefix or 'result'}.{'jpg' if fmt == 'jpeg' else 'png'}"
+        st.download_button("Tải ảnh", api_get(f"/session/{sid}/compose", params={**dl_args, "fmt": fmt}).content,
+                           file_name=_img_name, mime=f"image/{fmt}", type="primary", use_container_width=True,
+                           help=f"Tên file: {_img_name} · hiệu ứng và cường độ đang chọn")
+    with _cp:
+        _pdf_name = f"{_bib_prefix}_report.pdf" if _bib_prefix else "color_pop_runner_report.pdf"
+        if _pdf_ok:
+            st.download_button("Tải báo cáo PDF", st.session_state["pdf"], file_name=_pdf_name,
+                               mime="application/pdf", type="primary", use_container_width=True,
+                               help=f"Tên file: {_pdf_name}")
+        else:
+            _make_pdf = st.button("Tạo báo cáo PDF", type="primary", use_container_width=True,
+                                  help="Thông tin ảnh, cài đặt, từng bước pipeline và so sánh trước / sau")
+    _pdf_status = st.container()                      # thanh tiến độ / thông báo PDF nằm ngay dưới hàng nút
 
-st.markdown("### Xuất kết quả")
-st.caption(f"Áp dụng hiệu ứng **{_flabel}**" + ("" if bg_filter == "none" else f" · cường độ {bg_int:.0%}")
-           + " — ảnh tải về và báo cáo đều dùng đúng thiết lập này.")
-d1, d2 = st.columns(2, gap="medium")
-
-with d1, st.container(border=True):
-    st.markdown("**Ảnh kết quả**")
-    fmt = st.radio("Định dạng", ["png", "jpeg"], horizontal=True, label_visibility="collapsed",
-                   format_func=lambda v: "PNG · không nén" if v == "png" else "JPEG · nhẹ hơn")
-    _img_name = f"{_bib_prefix or 'result'}.{'jpg' if fmt == 'jpeg' else 'png'}"
-    st.caption(f"Tên file: {_img_name}")
-    img = api_get(f"/session/{sid}/compose", params={**dl_args, "fmt": fmt}).content
-    st.download_button("Tải ảnh kết quả", img, file_name=_img_name, mime=f"image/{fmt}",
-                       type="primary", use_container_width=True)
-
-with d2, st.container(border=True):
-    st.markdown("**Báo cáo PDF**")
-    _pdf_name = f"{_bib_prefix}_report.pdf" if _bib_prefix else "color_pop_runner_report.pdf"
-    st.caption("Thông tin ảnh, cài đặt, từng bước pipeline và so sánh trước / sau.")
-    if st.button("Tạo lại báo cáo" if _pdf_ok else "Tạo báo cáo PDF", use_container_width=True,
-                 type="secondary" if _pdf_ok else "primary"):
+if _make_pdf:
+    with _pdf_status:
         # backend không báo tiến độ -> chạy request ở thread phụ, thanh chạy theo thời gian (tiệm cận 95%) tới khi xong
         _box = {}
 
@@ -597,7 +599,6 @@ with d2, st.container(border=True):
             _el = time.time() - _t0
             _bar.progress(min(0.95, 1 - 0.5 ** (_el / 3)), text=f"Đang tạo báo cáo PDF… {_el:.0f}s")
             time.sleep(0.2)
-        _bar.progress(1.0, text="Xong")
         _bar.empty()
         rr = _box.get("r")
         if rr is None:
@@ -605,15 +606,12 @@ with d2, st.container(border=True):
         elif rr.status_code == 200:
             st.session_state["pdf"] = rr.content
             st.session_state["pdf_key"] = (sid, _ver, bg_filter, bg_color, bg_int)     # PDF chỉ đúng với hiệu ứng lúc tạo
-            _pdf_ok = True
+            st.rerun()                                # nút chuyển thành "Tải báo cáo PDF"
         else:
             st.error(err_msg(rr))
-    if _pdf_ok:
-        st.caption(f"Tên file: {_pdf_name}")
-        st.download_button("Tải báo cáo PDF", st.session_state["pdf"], file_name=_pdf_name,
-                           mime="application/pdf", type="primary", use_container_width=True)
-    elif st.session_state.get("pdf"):
-        st.caption("Hiệu ứng đã đổi — bấm tạo báo cáo để PDF khớp với ảnh hiện tại.")
+elif st.session_state.get("pdf") and not _pdf_ok:
+    with _pdf_status:
+        st.caption("Hiệu ứng đã đổi — bấm tạo lại báo cáo PDF để khớp với ảnh hiện tại.")
 
 with st.expander("Debug: alpha & trimap"):
     _e1, _e2 = st.columns(2)
