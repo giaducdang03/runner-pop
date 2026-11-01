@@ -56,10 +56,10 @@ Trình duyệt ──▶ Streamlit frontend (cổng 8501) ──HTTP──▶ Fa
 ### 2.2 Chức năng chính
 1. Tải ảnh, đánh giá chất lượng và tiền xử lý **chỉ cho bước phát hiện**.
 2. Phát hiện người, tự chọn người chạy chính (chế độ tự động) hoặc để người dùng chọn.
-3. Tách nền bằng engine được chọn, khử nhiễm màu viền.
-4. Ghép kết quả đen trắng với cường độ chỉnh realtime, so sánh trước/sau.
+3. Tách nền bằng engine được chọn, khử nhiễm màu viền, **đọc số BIB** của người được tách.
+4. Ghép kết quả với **bộ lọc nền** chọn được (mặc định đen trắng) và cường độ chỉnh realtime, so sánh trước/sau.
 5. Hiển thị **pipeline từng bước theo thời gian thực** (ảnh trung gian, thời gian, ghi chú), phóng to từng ảnh.
-6. Tải ảnh kết quả (PNG/JPEG) và **xuất báo cáo PDF** toàn bộ thông tin.
+6. Tải ảnh kết quả (PNG/JPEG) và **xuất báo cáo PDF** toàn bộ thông tin; tên file lấy theo số BIB.
 
 ### 2.3 Người dùng
 
@@ -84,7 +84,7 @@ Trình duyệt ──▶ Streamlit frontend (cổng 8501) ──HTTP──▶ Fa
 
 ### 2.6 Giả định và phụ thuộc
 - Ảnh có ít nhất một người đủ rõ để YOLO phát hiện; nếu không, người dùng nhập box thủ công.
-- Hệ thống có quyền tải model lần đầu. Thư viện: `torch`, `ultralytics`, `opencv-python`, `pymatting`, `rembg[cpu]`, `fastapi`, `streamlit`, `fpdf2`.
+- Hệ thống có quyền tải model lần đầu. Thư viện: `torch`, `ultralytics`, `opencv-python`, `pymatting`, `rapidocr-onnxruntime`, `rembg[cpu]`, `fastapi`, `streamlit`, `fpdf2`.
 - Máy có font TTF hỗ trợ tiếng Việt (Arial, Segoe UI, DejaVu) để xuất PDF, hoặc đặt `REPORT_FONT`.
 
 ---
@@ -94,7 +94,8 @@ Trình duyệt ──▶ Streamlit frontend (cổng 8501) ──HTTP──▶ Fa
 ### 3.1 Giao diện người dùng (Streamlit)
 - **Sidebar:** công tắc Chế độ tự động; chọn tiền xử lý (Tự động / Không / Tự chọn các bước); chọn thuật toán tách nền; thanh trượt độ rộng vùng viền; thanh trượt ngưỡng độ nét (chỉ bật với engine `focus`); trạng thái backend.
 - **Khu vực chính:** tải ảnh → dòng chất lượng ảnh → Pipeline 1 → ảnh các box đã phát hiện + chọn người + box thủ công + nút Xử lý → Pipeline 2 → khung xem kết quả → tải ảnh / báo cáo PDF / debug alpha & trimap.
-- **Khung xem kết quả:** các chế độ *So sánh (kéo thanh)*, *Cạnh nhau (trái trước, phải sau)*, *Chỉ kết quả*, *Chỉ ảnh gốc*; thanh cường độ nền đen trắng 0–100%; hỗ trợ ảnh ngang và ảnh dọc.
+- **Số BIB:** ô "Số BIB" trên khung xem kết quả, điền sẵn số đọc được, sửa tay được (ghi chú "không đọc được tự động" khi để trống); tên file tải về dùng giá trị trong ô.
+- **Khung xem kết quả:** các chế độ *So sánh (kéo thanh)*, *Cạnh nhau (trái trước, phải sau)*, *Chỉ kết quả*, *Chỉ ảnh gốc*; lưới ô chọn bộ lọc nền với ảnh xem trước từ chính ảnh người dùng, ô đang chọn được tô nổi bật, kèm một thanh cường độ hiệu ứng 0–100% (mục 4.14); hỗ trợ ảnh ngang và ảnh dọc.
 - **Sơ đồ pipeline:** thẻ nằm ngang nối bằng mũi tên; bấm ảnh để mở modal phóng to, phím ← → chuyển bước, Esc đóng.
 
 ### 3.2 Giao diện lập trình (REST API – FastAPI)
@@ -102,15 +103,17 @@ Trình duyệt ──▶ Streamlit frontend (cổng 8501) ──HTTP──▶ Fa
 | Phương thức & đường dẫn | Mô tả |
 |---|---|
 | `GET /health` | Tình trạng backend, có ultralytics không |
-| `GET /options` | Danh sách engine và bước tiền xử lý hiện có |
+| `GET /options` | Danh sách engine, bước tiền xử lý và bộ lọc nền hiện có (`bg_filters`) |
 | `POST /detect?preprocess=auto\|none\|a,b&background=bool` | Tải ảnh, tiền xử lý, phát hiện người, tạo session |
-| `POST /process/{id}?person=&method=&band=&focus=&box=&background=bool` | Tách nền cho người chọn |
+| `POST /process/{id}?person=&method=&band=&focus=&box=&background=bool` | Tách nền cho người chọn; kết quả có thêm `bib` ("" nếu không đọc được) |
 | `GET /session/{id}/job/{detect\|segment}?since=N` | Tiến độ realtime: bước mới, bước đang chạy, kết quả / lỗi |
 | `GET /session/{id}/trace` | Toàn bộ bước pipeline kèm ảnh minh hoạ |
 | `GET /session/{id}/preview.jpg` | Ảnh làm việc kèm box đánh số |
 | `GET /session/{id}/{original.jpg\|foreground.png\|background.jpg\|alpha.png\|trimap.png}` | Ảnh thành phần |
-| `GET /session/{id}/compose?intensity=&fmt=png\|jpeg` | Ảnh kết quả cuối (tải về) |
-| `GET /session/{id}/report.pdf?intensity=` | Báo cáo PDF |
+| `GET /session/{id}/bgfilter_previews?color=` | Ảnh xem trước (cạnh dài 240 px) của mọi bộ lọc trên chính ảnh đã tách, dạng JSON data-URL |
+| `GET /session/{id}/bgfilter.jpg?filter=&color=` | Ảnh nền đã áp bộ lọc ở cường độ đầy đủ (viewer trộn realtime) |
+| `GET /session/{id}/compose?intensity=&fmt=png\|jpeg&filter=&color=` | Ảnh kết quả cuối (tải về) |
+| `GET /session/{id}/report.pdf?intensity=&filter=&color=` | Báo cáo PDF |
 
 Mã lỗi chính: `400` tham số sai / ảnh không đọc được; `404` session không tồn tại; `409` chưa phát hiện / chưa xử lý; `413` ảnh quá lớn; `422` không phát hiện người; `503` thiếu thư viện.
 
@@ -166,8 +169,8 @@ Trạng thái: ✔ = đã triển khai.
 
 | ID | Yêu cầu | TT |
 |---|---|---|
-| FR-40 | Công thức ghép: `out = α·F + (1−α)·((1−s)·B + s·gray(B))`, s ∈ [0,1] là cường độ; frontend và backend dùng cùng công thức. | ✔ |
-| FR-41 | Thanh cường độ đổi kết quả tức thì trong trình duyệt, không gọi lại backend. | ✔ |
+| FR-40 | Công thức ghép: `out = α·F + (1−α)·((1−s)·B + s·Bf)`, s ∈ [0,1] là cường độ, `Bf` là nền đã lọc (mục 4.14; bộ lọc `bw` cho `Bf = gray(B)` như bản gốc); frontend và backend dùng cùng công thức. | ✔ (mở rộng ở 4.14) |
+| FR-41 | Thanh cường độ đổi kết quả trong trình duyệt, không chạy lại pipeline tách nền. Từ mục 4.14, thanh là một thanh cường độ duy nhất dưới lưới bộ lọc và cập nhật khi người dùng thả thanh (không còn cập nhật liên tục khi kéo). | ✔ (điều chỉnh ở 4.14) |
 | FR-42 | Chế độ xem: so sánh kéo thanh, cạnh nhau, chỉ kết quả, chỉ ảnh gốc; ảnh dọc không bị cắt khỏi khung. | ✔ |
 | FR-43 | Tải ảnh kết quả PNG hoặc JPEG ở cường độ chọn trước. | ✔ |
 | FR-44 | Xem ảnh debug: alpha matte và trimap. | ✔ |
@@ -204,6 +207,37 @@ Trạng thái: ✔ = đã triển khai.
 | FR-80 | Thêm bước tiền xử lý mới chỉ bằng một hàm `rgb → rgb` đăng ký với `@STEPS.register`; giao diện tự hiện qua `/options`. | ✔ |
 | FR-81 | Thêm engine tách nền mới bằng một file đăng ký `@ENGINES.register` với chữ ký `(scene, person, params) → Cutout`. | ✔ |
 | FR-82 | Bước mới hiện trên sơ đồ pipeline và báo cáo PDF chỉ bằng cách bọc đoạn code trong `with trace.stage(...)`. | ✔ |
+
+### 4.14 Bộ lọc nền (đề xuất, 01/11/2026)
+
+Sau khi tách người, nền bên dưới có thể áp các bộ lọc khác nhau thay vì chỉ đen trắng. Kế hoạch triển khai: [superpowers/plans/2026-11-01-background-filters.md](superpowers/plans/2026-11-01-background-filters.md).
+
+| ID | Yêu cầu | TT |
+|---|---|---|
+| FR-130 | Có danh sách bộ lọc nền đăng ký bằng `@BG_FILTERS.register(name, label)`, chữ ký `(bg, valid, *, color) → ảnh float32 cùng kích thước`; giao diện tự hiện qua `/options` (`bg_filters`), thêm bộ lọc không phải sửa UI. | Đề xuất |
+| FR-131 | Bộ lọc ban đầu: `none` (ảnh gốc), `bw` (đen trắng, mặc định, kết quả giống hệt bản trước), `blur` (mờ Gaussian), `bokeh` (mờ hình đĩa), `sepia`, `warm`, `cool`, `mosaic`, `sketch`, `vignette`, `solid` (màu trơn do người dùng chọn qua `color`). | Đề xuất |
+| FR-132 | Bộ lọc lấy mẫu lân cận (`blur`, `bokeh`, `mosaic`, `sketch`) chỉ tính từ pixel nền hợp lệ (α < 1, chuẩn hoá theo trọng số) để màu người không lem sang nền thành quầng sáng; vùng không có pixel hợp lệ lân cận giữ nguyên giá trị nền, không sinh NaN. | Đề xuất |
+| FR-133 | Backend dựng `Bf` ở cường độ đầy đủ và lưu theo `(filter, color)` trong `Cutout` (mất khi tách lại); `GET /session/{id}/bgfilter.jpg` trả `Bf`. Tên bộ lọc lạ hoặc `color` sai định dạng `#RRGGBB` trả `400`. | Đề xuất |
+| FR-134 | Viewer tải `Bf` một lần mỗi lần đổi bộ lọc và chỉ trộn `B` với `Bf` trong trình duyệt (không tính bộ lọc trong JS). Cường độ 0 cho ra nền gốc. | Đề xuất |
+| FR-135 | `/compose` và `/report.pdf` nhận `filter`, `color` (mặc định `bw`, `#808080`); báo cáo ghi tên bộ lọc đã dùng. Không truyền thì kết quả giống bản trước. | Đề xuất |
+| FR-136 | Đổi bộ lọc không chạy lại bất kỳ bước nào của pipeline tách nền và không thêm bước vào sơ đồ pipeline. | Đề xuất |
+| FR-137 | Giao diện chọn bộ lọc là lưới 3 cột các ô xem trước (ảnh thu nhỏ do backend dựng từ chính cutout, cường độ đầy đủ, cache theo cutout); bấm ô để chọn, ô đang chọn nổi bật; có ô "Ảnh gốc"; chọn `solid` thì hiện ô chọn màu. Một thanh cường độ duy nhất dùng chung cho viewer, ảnh tải về và PDF. | Đề xuất |
+
+### 4.15 Nhận diện số BIB
+
+Xác định số BIB của người được tách, dùng để đặt tên file và hiển thị trên giao diện xử lý.
+
+| ID | Yêu cầu | TT |
+|---|---|---|
+| FR-140 | Sau khi tách nền, chạy bước "Xác định số BIB" trong cùng tác vụ `segment` (hiện trên sơ đồ pipeline kèm ghi chú `BIB = …` hoặc "không đọc được số BIB"). | ✔ |
+| FR-141 | Chỉ đọc trên vùng thân của người được chọn (15%–85% chiều cao box, trong mask người nếu có; ngoài mask tô xám trung tính) để không đọc nhầm số của người khác; vùng được phóng to khi nhỏ để OCR đọc được. | ✔ |
+| FR-142 | Chấp nhận BIB dạng 0–2 chữ cái dính liền 1–6 chữ số (vd `F5215`, `M5520`, `1234`), tin cậy OCR ≥ 0,5, viết hoa; bỏ khoảng trắng giữa chữ và số. Chuỗi toàn chữ, số dài hơn 6 chữ số, hoặc chữ dính vào chuỗi chữ dài hơn 2 ký tự bị loại. | ✔ |
+| FR-143 | Nhiều ứng viên → chọn chuỗi có chiều cao chữ lớn nhất. Không có ứng viên hợp lệ → `bib = ""`, bước xử lý vẫn thành công. | ✔ |
+| FR-144 | `POST /process` trả `bib`; giá trị cũng lưu trong cài đặt lần tách gần nhất của session. | ✔ |
+| FR-145 | Giao diện có ô nhập "Số BIB" điền sẵn kết quả đọc được, người dùng sửa tay được; tên ảnh tải về là `BIB_<số>.png\|jpg` và PDF là `BIB_<số>_report.pdf` theo giá trị trong ô (chỉ giữ chữ và số); ô trống thì dùng tên cũ `result.*` / `color_pop_runner_report.pdf`. | ✔ |
+| FR-146 | Mô hình OCR (`rapidocr-onnxruntime`) được nạp một lần, an toàn khi nhiều thread gọi đồng thời; thư viện được import ở mức module để tránh deadlock khi import lười. | ✔ |
+
+Giới hạn: OCR có thể sai hoặc không đọc được khi BIB nhăn, nghiêng, bị che hoặc quá nhỏ; khi đó dùng ô nhập tay.
 
 ---
 
@@ -268,7 +302,9 @@ backend/
     occlusion.py           loại phần của người khác, thứ tự trước/sau theo vị trí chân
     segment/               ENGINES: grabcut.py (cf, knn), focus.py, birefnet.py
     matting.py, masks.py   khối dùng chung
-    compose.py             ghép đen trắng
+    bib.py                 đọc số BIB (OCR) trên thân người được chọn
+    compose.py             ghép nền đã lọc với người
+    bgfilter.py            BG_FILTERS: bộ lọc nền (bw, blur, bokeh, sepia, ...)
     trace.py               nhật ký bước + ảnh trung gian
 frontend/app.py            giao diện Streamlit
 ```
@@ -288,9 +324,9 @@ Tải ảnh ─▶ resize + EXIF ─▶ đánh giá chất lượng ─▶ chu�
                           │ birefnet: alpha toàn ảnh → giới hạn theo mask YOLO
                           └─────────────────────────────────────────┘
                                                                          │
-                                          khử nhiễm màu viền  →  Cutout (α, F, B, trimap)
+                                          khử nhiễm màu viền  →  Cutout (α, F, B, trimap)  →  đọc số BIB (OCR vùng thân)
                                                                          │
-                          trình duyệt: ghép realtime theo cường độ  /  backend: compose, PDF
+                          trình duyệt: ghép realtime theo cường độ (nền đã lọc lấy từ /bgfilter.jpg)  /  backend: bgfilter → compose, PDF
 ```
 
 ### 6.3 Mô hình dữ liệu chính
@@ -300,7 +336,7 @@ Tải ảnh ─▶ resize + EXIF ─▶ đánh giá chất lượng ─▶ chu�
 | `Person` | idx, box, conf, mask (uint8 0/255) |
 | `Scene` | ảnh làm việc, danh sách `Person`, ảnh đã tiền xử lý, chất lượng, các bước tiền xử lý đã dùng, số lần thử lại, người được gợi ý, `Trace` |
 | `SegParams` | band_frac, focus_frac, trace |
-| `Cutout` | image, alpha, foreground, background, trimap, trace |
+| `Cutout` | image, alpha, foreground, background, trimap, trace, filtered (cache nền đã lọc theo bộ lọc + màu) |
 | `Session` | ảnh, `Scene`, `Cutout`, các `Job` (detect / segment), cài đặt lần tách gần nhất |
 | `Job` | trace đang ghi dần, state (`running` / `done` / `error`), lỗi, kết quả |
 
