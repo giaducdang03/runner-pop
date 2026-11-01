@@ -60,11 +60,12 @@ PIPELINE_TMPL = """
 <style>
   :root { color-scheme: light dark; }
   body { margin:0; font-family: system-ui, sans-serif; }
-  #row { display:flex; gap:8px; overflow-x:auto; padding:4px 2px 12px; }
+  #row { display:flex; gap:8px; overflow-x:scroll; padding:4px 2px 12px; }
   .card { flex:0 0 220px; border:1px solid rgba(128,128,128,.35); border-radius:10px; padding:8px; box-sizing:border-box; }
   .card .n { font-size:11px; opacity:.65; }
   .card .t { font-weight:600; font-size:13px; margin:2px 0 6px; min-height:34px; }
-  .card img { width:100%; border-radius:6px; display:block; cursor:zoom-in; transition:transform .15s; }
+  /* ảnh dọc (ROI người) không được làm thẻ cao hơn iframe 440px, nếu không thanh cuộn ngang bị cắt mất */
+  .card img { width:100%; max-height:240px; object-fit:contain; border-radius:6px; display:block; cursor:zoom-in; transition:transform .15s; }
   .card img:hover { transform:scale(1.02); }
   .card .none { height:70px; border-radius:6px; background:rgba(128,128,128,.12); display:flex;
                 align-items:center; justify-content:center; font-size:11px; opacity:.6; }
@@ -375,6 +376,13 @@ a = st.session_state["assets"]
 render_pipeline(f"Pipeline 2 · Tách nền ({ENGINE_LABELS.get(info['method'], info['method'])})",
                 st.session_state["trace"]["segment"])
 st.success(f"Xong trong {info['elapsed_s']} s.")
+_det_bib = info.get("bib", "")
+if st.session_state.get("bib_src") != (sid, _det_bib):       # mỗi lần xử lý xong -> nạp lại giá trị đọc được
+    st.session_state["bib_src"] = (sid, _det_bib)
+    st.session_state["bib_value"] = _det_bib
+st.text_input("Số BIB" + ("" if _det_bib else " (không đọc được tự động — nhập tay nếu cần)"), key="bib_value")
+_bib = "".join(ch for ch in st.session_state.get("bib_value", "") if ch.isalnum())
+_bib_prefix = f"BIB_{_bib}" if _bib else ""
 _fc = info.get("focus_confidence")
 if _fc is not None and _fc < OPTS.get("focus_conf_min", 1.3):
     st.warning("Ảnh này không có phông mờ rõ — kết quả 'mặt phẳng nét' có thể kém tin cậy. Thử engine khác.")
@@ -483,7 +491,7 @@ with d1:
     dl_int = st.slider("Cường độ khi tải về", 0, 100, 100, 5, format="%d%%") / 100
     fmt = st.radio("Định dạng", ["png", "jpeg"], horizontal=True)
     img = api_get(f"/session/{sid}/compose", params={"intensity": dl_int, "fmt": fmt}).content
-    st.download_button("Tải ảnh kết quả", img, file_name=f"result.{'jpg' if fmt == 'jpeg' else 'png'}",
+    st.download_button("Tải ảnh kết quả", img, file_name=f"{_bib_prefix or 'result'}.{'jpg' if fmt == 'jpeg' else 'png'}",
                        mime=f"image/{fmt}", use_container_width=True)
 with d2:
     st.markdown("**Báo cáo PDF**")
@@ -495,7 +503,7 @@ with d2:
         else:
             st.error(err_msg(rr))
     if st.session_state.get("pdf"):
-        st.download_button("Tải báo cáo PDF", st.session_state["pdf"], file_name="color_pop_runner_report.pdf",
+        st.download_button("Tải báo cáo PDF", st.session_state["pdf"], file_name=f"{_bib_prefix}_report.pdf" if _bib_prefix else "color_pop_runner_report.pdf",
                            mime="application/pdf", use_container_width=True)
     with st.expander("Debug: alpha & trimap"):
         st.image(f"{API}/session/{sid}/alpha.png", caption="Alpha matte", use_container_width=True)

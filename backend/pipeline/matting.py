@@ -5,6 +5,9 @@ from typing import Optional
 
 import cv2
 import numpy as np
+# Import ở mức module (main thread lúc khởi động): import lười trong nhiều thread cùng lúc
+# gây _DeadlockError / ImportError do pymatting nạp dở.
+from pymatting import estimate_alpha_cf, estimate_alpha_knn, estimate_foreground_ml
 
 from . import accel
 from . import config as C
@@ -39,8 +42,6 @@ def matte(rgb_f: np.ndarray, trimap: np.ndarray, method: str = "cf") -> np.ndarr
     method: 'cf' (closed-form, chất lượng cao, chậm hơn) | 'knn' (nhanh hơn)
     Chỉ giải trong ROI quanh vùng unknown để tiết kiệm RAM/thời gian.
     """
-    from pymatting import estimate_alpha_cf, estimate_alpha_knn
-
     h, w = trimap.shape
     ys, xs = np.nonzero(trimap > 0)            # FG hoặc unknown
     if len(xs) == 0:
@@ -78,7 +79,6 @@ def decontaminate(rgb_f: np.ndarray, alpha: np.ndarray):
       - B sạch  -> phần nền sau viền mềm không lẫn độ sáng của người
     Trả về (F, B), cả hai float32 HxWx3.
     """
-    from pymatting import estimate_foreground_ml
     h, w = alpha.shape
     ys, xs = np.nonzero(alpha > 0.001)
     if len(xs) == 0:

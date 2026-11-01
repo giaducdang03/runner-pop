@@ -15,3 +15,4 @@ rembg[cpu]   # BiRefNet qua onnxruntime (tải ~224 MB lần đầu)
 torch
 torchvision
 onnx
+rapidocr-onnxruntime   # đọc số BIB

@@ -255,6 +255,7 @@ class ProcessOut(BaseModel):
     method: str
     elapsed_s: float
     unknown_px: int
+    bib: str = ""                               # số BIB đọc được ("" = không đọc được)
     focus_confidence: Optional[float] = None    # chỉ engine focus: tỉ lệ nét người/nền (FR-126)
 
 
@@ -432,8 +433,12 @@ def process(
         s.cutout = P.build_cutout(s.scene, chosen, method,
                                   P.SegParams(band_frac=band, focus_frac=focus,
                                               cache=s.cache, device_mode=device), trace=job.trace)
-        s.meta = {"method": method, "band": band, "focus": focus, "person": chosen.idx}
+        with job.trace.stage("bib", "Xác định số BIB", note="OCR vùng thân của người được chọn") as st_bib:
+            bib = P.read_bib(s.scene.rgb, chosen.box, chosen.mask)
+            st_bib.note = f"BIB = {bib}" if bib else "không đọc được số BIB"
+        s.meta = {"method": method, "band": band, "focus": focus, "person": chosen.idx, "bib": bib}
         return ProcessOut(
+            bib=bib,
             session_id=sid, person=chosen.idx, method=method,
             elapsed_s=round(time.time() - t0, 2),
             unknown_px=int((s.cutout.trimap == 128).sum()),
