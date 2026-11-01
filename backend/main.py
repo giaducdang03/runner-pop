@@ -519,12 +519,18 @@ def bgfilter(sid: str, filter: str = Query("bw"), color: str = Query("#808080"))
 
 
 @app.get("/session/{sid}/bgfilter_previews")
-def bgfilter_previews(sid: str, color: str = Query("#808080")):
+def bgfilter_previews(sid: str, color: str = Query("#808080"),
+                      names: Optional[str] = Query(None, description="Chỉ dựng các bộ lọc này (cách nhau dấu phẩy); bỏ trống = tất cả")):
     """Ảnh xem trước (cạnh dài 240 px) của mọi bộ lọc trên chính ảnh đã tách, cache theo cutout."""
     c = _cut(sid)
     _bg_args("bw", color)
+    wanted = [n for n in names.split(",") if n] if names else None
+    for n in wanted or []:
+        _bg_args(n, color)
     thumb, out = None, []
     for e in P.BG_FILTERS.describe():
+        if wanted is not None and e["name"] not in wanted:
+            continue
         key = ("preview", e["name"], color)
         if key not in c.filtered:
             thumb = thumb or P.thumbnail_cutout(c)

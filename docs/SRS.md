@@ -110,7 +110,7 @@ Trình duyệt ──▶ Streamlit frontend (cổng 8501) ──HTTP──▶ Fa
 | `GET /session/{id}/trace` | Toàn bộ bước pipeline kèm ảnh minh hoạ |
 | `GET /session/{id}/preview.jpg` | Ảnh làm việc kèm box đánh số |
 | `GET /session/{id}/{original.jpg\|foreground.png\|background.jpg\|alpha.png\|trimap.png}` | Ảnh thành phần |
-| `GET /session/{id}/bgfilter_previews?color=` | Ảnh xem trước (cạnh dài 240 px) của mọi bộ lọc trên chính ảnh đã tách, dạng JSON data-URL |
+| `GET /session/{id}/bgfilter_previews?color=&names=a,b` | Ảnh xem trước (cạnh dài 240 px) của mọi bộ lọc trên chính ảnh đã tách, dạng JSON data-URL |
 | `GET /session/{id}/bgfilter.jpg?filter=&color=` | Ảnh nền đã áp bộ lọc ở cường độ đầy đủ (viewer trộn realtime) |
 | `GET /session/{id}/compose?intensity=&fmt=png\|jpeg&filter=&color=` | Ảnh kết quả cuối (tải về) |
 | `GET /session/{id}/report.pdf?intensity=&filter=&color=` | Báo cáo PDF |
@@ -221,7 +221,7 @@ Sau khi tách người, nền bên dưới có thể áp các bộ lọc khác n
 | FR-134 | Viewer tải `Bf` một lần mỗi lần đổi bộ lọc và chỉ trộn `B` với `Bf` trong trình duyệt (không tính bộ lọc trong JS). Cường độ 0 cho ra nền gốc. | ✔ |
 | FR-135 | `/compose` và `/report.pdf` nhận `filter`, `color` (mặc định `bw`, `#808080`); báo cáo ghi tên bộ lọc đã dùng. Không truyền thì kết quả giống bản trước. | ✔ |
 | FR-136 | Đổi bộ lọc không chạy lại bất kỳ bước nào của pipeline tách nền và không thêm bước vào sơ đồ pipeline. | ✔ |
-| FR-137 | Giao diện chọn bộ lọc: viewer ở cột trái và lưới 3 cột các ô xem trước ở cột phải (khung cuộn riêng, không làm trang dài thêm) để vừa chọn vừa thấy kết quả không cần cuộn trang; các ô xem trước (ảnh thu nhỏ do backend dựng từ chính cutout, cường độ đầy đủ, cache theo cutout); bấm ô để chọn, ô đang chọn nổi bật; có ô "Ảnh gốc"; chọn `solid` thì hiện ô chọn màu. Một thanh cường độ duy nhất dùng chung cho viewer, ảnh tải về và PDF. | ✔ |
+| FR-137 | Giao diện chọn bộ lọc: viewer ở cột trái và lưới 3 cột các ô xem trước ở cột phải (khung cuộn riêng, không làm trang dài thêm) để vừa chọn vừa thấy kết quả không cần cuộn trang; các ô xem trước (ảnh thu nhỏ do backend dựng từ chính cutout, cường độ đầy đủ, cache theo cutout); ảnh xem trước tải từng ô một kèm thanh tiến độ khi chưa có; bấm ô để chọn, ô đang chọn nổi bật; có ô "Ảnh gốc"; chọn `solid` thì hiện ô chọn màu. Một thanh cường độ duy nhất dùng chung cho viewer, ảnh tải về và PDF. | ✔ |
 
 ### 4.15 Nhận diện số BIB
 

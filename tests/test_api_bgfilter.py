@@ -90,3 +90,9 @@ def test_report_passes_filter(client, sid, monkeypatch):
     assert client.get(f"/session/{sid}/report.pdf", params={"filter": "blur"}).status_code == 200
     assert seen["bg_filter"] == "blur"
     assert client.get(f"/session/{sid}/report.pdf", params={"filter": "nope"}).status_code == 400
+
+
+def test_previews_names_subset(client, sid):
+    r = client.get(f"/session/{sid}/bgfilter_previews", params={"names": "blur,sepia"})
+    assert r.status_code == 200 and [i["name"] for i in r.json()] == ["blur", "sepia"]
+    assert client.get(f"/session/{sid}/bgfilter_previews", params={"names": "nope"}).status_code == 400

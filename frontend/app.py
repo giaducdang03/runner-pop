@@ -506,20 +506,28 @@ st.markdown(
 with _right:
     st.markdown("**Chỉnh màu nền**")
     if st.session_state.get("bgf_prev_key") != (sid, bg_color, _ver):
-        try:
-            _pv = api_get(f"/session/{sid}/bgfilter_previews", params={"color": bg_color}).json()
-        except Exception:
-            _pv = []                                      # backend cũ hoặc lỗi -> lưới chỉ còn nút, không có ảnh
-        st.session_state["bgf_prev"] = {p["name"]: base64.b64decode(p["image"].split(",", 1)[1]) for p in _pv}
+        st.session_state["bgf_prev"] = {}
         st.session_state["bgf_prev_key"] = (sid, bg_color, _ver)
     _prev = st.session_state["bgf_prev"]
+    _todo = [f["name"] for f in BG_FILTERS if f["name"] not in _prev]
+    if _todo:                                             # tải từng ảnh xem trước một, có thanh tiến độ
+        _bar = st.progress(0.0, text="Đang tải ảnh xem trước…")
+        for _k, _n in enumerate(_todo, 1):
+            try:
+                _pv = api_get(f"/session/{sid}/bgfilter_previews", params={"color": bg_color, "names": _n}).json()
+                _it = next((p for p in _pv if p["name"] == _n), None)
+                _prev[_n] = base64.b64decode(_it["image"].split(",", 1)[1]) if _it else b""
+            except Exception:
+                _prev[_n] = b""                           # lỗi -> ô chỉ còn nút, không có ảnh (không thử lại mãi)
+            _bar.progress(_k / len(_todo), text=f"Đang tải ảnh xem trước… {_k}/{len(_todo)}")
+        _bar.empty()
     _N = 3
     with st.container(height=470, border=False):          # khung cuộn riêng: trang không dài thêm khi có nhiều hiệu ứng
         for _row in range(0, len(BG_FILTERS), _N):
             _cols = st.columns(_N, gap="small")
             for _col, _f in zip(_cols, BG_FILTERS[_row:_row + _N]):
                 with _col:
-                    if _f["name"] in _prev:
+                    if _prev.get(_f["name"]):
                         st.image(_prev[_f["name"]], use_container_width=True)
                     if st.button(_f["label"], key=f"bgf_{_f['name']}", use_container_width=True,
                                  type="primary" if _f["name"] == bg_filter else "secondary"):
