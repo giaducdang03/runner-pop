@@ -319,7 +319,7 @@ def build_report(rgb: np.ndarray, scene: P.Scene, cutout: Optional[P.Cutout], me
         pdf.set_font("vn", "", 9)
         pdf.cell(half, 5, "Trước (ảnh gốc)", align="C")
         pdf.set_x(pdf.l_margin + half + 6)
-        pdf.cell(half, 5, "Sau (giữ màu người, nền đen trắng)", align="C")
+        pdf.cell(half, 5, f"Sau (giữ màu người, nền {P.BG_FILTERS.label(bg_filter)})", align="C")
         pdf.set_y(y0 + ih + 8)
 
         pdf.ensure(half * h / w + 14)
