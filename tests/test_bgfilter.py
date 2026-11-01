@@ -55,3 +55,22 @@ def test_apply_is_cached(make_cutout):
     c = make_cutout()
     assert apply_bg_filter(c, "blur") is apply_bg_filter(c, "blur")
     assert apply_bg_filter(c, "solid", "#ff0000") is not apply_bg_filter(c, "solid", "#00ff00")
+
+
+def test_every_filter_changes_a_textured_background(make_cutout):
+    c = make_cutout(120, 160)
+    rng = np.random.default_rng(0)
+    c.background = rng.random(c.background.shape).astype(np.float32) * 0.8 + 0.1
+    for name in BG_FILTERS.names():
+        if name == "none":
+            continue
+        assert not np.allclose(apply_bg_filter(c, name), c.background, atol=1e-3), name
+
+
+def test_grain_is_deterministic(make_cutout):
+    a, b = make_cutout(), make_cutout()
+    assert np.array_equal(apply_bg_filter(a, "grain"), apply_bg_filter(b, "grain"))
+
+
+def test_new_filters_registered(make_cutout):
+    assert {"vivid", "bright", "dramatic", "autumn", "vintage", "grain", "neon", "dreamy", "painting"} <= set(BG_FILTERS.names())

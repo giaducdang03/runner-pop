@@ -411,7 +411,7 @@ VIEWER = """
   #stage { text-align:center; }
   /* wrap ôm sát canvas để toạ độ kéo thanh luôn khớp ảnh; ảnh dọc bị giới hạn chiều cao để không tràn iframe */
   #wrap { position:relative; display:inline-block; max-width:100%; user-select:none; touch-action:none; }
-  canvas { display:block; width:auto; height:auto; max-width:100%; max-height:740px; border-radius:6px; }
+  canvas { display:block; width:auto; height:auto; max-width:100%; max-height:540px; border-radius:6px; }
   #tag { position:absolute; top:8px; padding:2px 8px; border-radius:4px; font-size:12px;
          background:rgba(0,0,0,.55); color:#fff; pointer-events:none; }
   #line { position:absolute; top:0; bottom:0; width:2px; background:#fff; box-shadow:0 0 4px #0008; pointer-events:none; }
@@ -495,40 +495,40 @@ const px = i => { const c = document.createElement('canvas'); c.width = i.width;
 html = (VIEWER.replace("__ORIG__", a["orig"]).replace("__FG__", a["fg"])
         .replace("__BG__", a["bg"]).replace("__ALPHA__", a["alpha"])
         .replace("__BF__", st.session_state["bgf_img"]).replace("__S__", f"{bg_int:.3f}"))
-components.html(html, height=780, scrolling=False)
+_left, _right = st.columns([5, 3], gap="medium")
+with _left:
+    components.html(html, height=620, scrolling=False)
 
-# ---------------------------------------------------------------- chỉnh màu nền (lưới nhỏ dưới viewer, chọn là áp dụng ngay)
+# ---------------------------------------------------------------- chỉnh màu nền (cột phải, cuộn trong khung cố định)
 st.markdown(
-    "<style>[class*='st-key-bgf_'] button{padding:.1rem .25rem;min-height:1.7rem;font-size:.78rem}"
-    "[class*='st-key-bgf_'] button p{font-size:.78rem}</style>", unsafe_allow_html=True)
-st.markdown("#### Chỉnh màu nền")
-if st.session_state.get("bgf_prev_key") != (sid, bg_color, _ver):
-    try:
-        _pv = api_get(f"/session/{sid}/bgfilter_previews", params={"color": bg_color}).json()
-    except Exception:
-        _pv = []                                          # backend cũ hoặc lỗi -> lưới chỉ còn nút, không có ảnh
-    st.session_state["bgf_prev"] = {p["name"]: base64.b64decode(p["image"].split(",", 1)[1]) for p in _pv}
-    st.session_state["bgf_prev_key"] = (sid, bg_color, _ver)
-_prev = st.session_state["bgf_prev"]
-_N = 6
-for _row in range(0, len(BG_FILTERS), _N):
-    _cols = st.columns(_N)
-    for _col, _f in zip(_cols, BG_FILTERS[_row:_row + _N]):
-        with _col:
-            if _f["name"] in _prev:
-                st.image(_prev[_f["name"]], use_container_width=True)
-            if st.button(_f["label"], key=f"bgf_{_f['name']}", use_container_width=True,
-                         type="primary" if _f["name"] == bg_filter else "secondary"):
-                st.session_state["bg_filter"] = _f["name"]
-                st.rerun()
-_c1, _c2 = st.columns([3, 1])
-with _c1:
+    "<style>[class*='st-key-bgf_'] button{padding:.05rem .2rem;min-height:1.6rem;font-size:.74rem}"
+    "[class*='st-key-bgf_'] button p{font-size:.74rem}</style>", unsafe_allow_html=True)
+with _right:
+    st.markdown("**Chỉnh màu nền**")
+    if st.session_state.get("bgf_prev_key") != (sid, bg_color, _ver):
+        try:
+            _pv = api_get(f"/session/{sid}/bgfilter_previews", params={"color": bg_color}).json()
+        except Exception:
+            _pv = []                                      # backend cũ hoặc lỗi -> lưới chỉ còn nút, không có ảnh
+        st.session_state["bgf_prev"] = {p["name"]: base64.b64decode(p["image"].split(",", 1)[1]) for p in _pv}
+        st.session_state["bgf_prev_key"] = (sid, bg_color, _ver)
+    _prev = st.session_state["bgf_prev"]
+    _N = 3
+    with st.container(height=470, border=False):          # khung cuộn riêng: trang không dài thêm khi có nhiều hiệu ứng
+        for _row in range(0, len(BG_FILTERS), _N):
+            _cols = st.columns(_N, gap="small")
+            for _col, _f in zip(_cols, BG_FILTERS[_row:_row + _N]):
+                with _col:
+                    if _f["name"] in _prev:
+                        st.image(_prev[_f["name"]], use_container_width=True)
+                    if st.button(_f["label"], key=f"bgf_{_f['name']}", use_container_width=True,
+                                 type="primary" if _f["name"] == bg_filter else "secondary"):
+                        st.session_state["bg_filter"] = _f["name"]
+                        st.rerun()
     if bg_filter != "none":
         st.slider("Cường độ hiệu ứng", 0, 100, 100, 5, format="%d%%", key="bg_intensity")
-with _c2:
     if bg_filter == "solid":
         st.color_picker("Màu nền", bg_color, key="bg_color")
-
 
 # ---------------------------------------------------------------- tải về + debug
 d1, d2 = st.columns(2)

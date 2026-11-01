@@ -215,13 +215,13 @@ Sau khi tách người, nền bên dưới có thể áp các bộ lọc khác n
 | ID | Yêu cầu | TT |
 |---|---|---|
 | FR-130 | Có danh sách bộ lọc nền đăng ký bằng `@BG_FILTERS.register(name, label)`, chữ ký `(bg, valid, *, color) → ảnh float32 cùng kích thước`; giao diện tự hiện qua `/options` (`bg_filters`), thêm bộ lọc không phải sửa UI. | ✔ |
-| FR-131 | Bộ lọc ban đầu: `none` (ảnh gốc), `bw` (đen trắng, mặc định, kết quả giống hệt bản trước), `blur` (mờ Gaussian), `bokeh` (mờ hình đĩa), `sepia`, `warm`, `cool`, `mosaic`, `sketch`, `vignette`, `solid` (màu trơn do người dùng chọn qua `color`). | ✔ |
+| FR-131 | Bộ lọc ban đầu: `none` (ảnh gốc), `bw` (đen trắng, mặc định, kết quả giống hệt bản trước), `blur` (mờ Gaussian), `bokeh` (mờ hình đĩa), `sepia`, `warm`, `cool`, `mosaic`, `sketch`, `vignette`, `vivid` (rực rỡ), `bright` (tươi sáng), `dramatic` (kịch tính), `autumn` (mùa thu), `vintage` (hoài cổ), `grain` (phim hạt, hạt cố định theo seed), `neon`, `dreamy` (mơ màng), `painting` (tranh vẽ), `solid` (màu trơn do người dùng chọn qua `color`). | ✔ |
 | FR-132 | Bộ lọc lấy mẫu lân cận (`blur`, `bokeh`, `mosaic`, `sketch`) chỉ tính từ pixel nền hợp lệ (α < 1, chuẩn hoá theo trọng số) để màu người không lem sang nền thành quầng sáng; vùng không có pixel hợp lệ lân cận giữ nguyên giá trị nền, không sinh NaN. | ✔ |
 | FR-133 | Backend dựng `Bf` ở cường độ đầy đủ và lưu theo `(filter, color)` trong `Cutout` (mất khi tách lại); `GET /session/{id}/bgfilter.jpg` trả `Bf`. Tên bộ lọc lạ hoặc `color` sai định dạng `#RRGGBB` trả `400`. | ✔ |
 | FR-134 | Viewer tải `Bf` một lần mỗi lần đổi bộ lọc và chỉ trộn `B` với `Bf` trong trình duyệt (không tính bộ lọc trong JS). Cường độ 0 cho ra nền gốc. | ✔ |
 | FR-135 | `/compose` và `/report.pdf` nhận `filter`, `color` (mặc định `bw`, `#808080`); báo cáo ghi tên bộ lọc đã dùng. Không truyền thì kết quả giống bản trước. | ✔ |
 | FR-136 | Đổi bộ lọc không chạy lại bất kỳ bước nào của pipeline tách nền và không thêm bước vào sơ đồ pipeline. | ✔ |
-| FR-137 | Giao diện chọn bộ lọc là lưới 3 cột các ô xem trước (ảnh thu nhỏ do backend dựng từ chính cutout, cường độ đầy đủ, cache theo cutout); bấm ô để chọn, ô đang chọn nổi bật; có ô "Ảnh gốc"; chọn `solid` thì hiện ô chọn màu. Một thanh cường độ duy nhất dùng chung cho viewer, ảnh tải về và PDF. | ✔ |
+| FR-137 | Giao diện chọn bộ lọc: viewer ở cột trái và lưới 3 cột các ô xem trước ở cột phải (khung cuộn riêng, không làm trang dài thêm) để vừa chọn vừa thấy kết quả không cần cuộn trang; các ô xem trước (ảnh thu nhỏ do backend dựng từ chính cutout, cường độ đầy đủ, cache theo cutout); bấm ô để chọn, ô đang chọn nổi bật; có ô "Ảnh gốc"; chọn `solid` thì hiện ô chọn màu. Một thanh cường độ duy nhất dùng chung cho viewer, ảnh tải về và PDF. | ✔ |
 
 ### 4.15 Nhận diện số BIB
 
