@@ -388,38 +388,14 @@ _fc = info.get("focus_confidence")
 if _fc is not None and _fc < OPTS.get("focus_conf_min", 1.3):
     st.warning("Ảnh này không có phông mờ rõ — kết quả 'mặt phẳng nét' có thể kém tin cậy. Thử engine khác.")
 
-# ---------------------------------------------------------------- chỉnh màu nền (lưới bộ lọc + cường độ)
+# ---------------------------------------------------------------- trạng thái bộ lọc nền (đọc trước viewer, lưới đặt dưới viewer)
 BG_FILTERS = OPTS.get("bg_filters") or [{"name": "bw", "label": "Nền đen trắng"}]
 if st.session_state.get("bg_filter") not in {f["name"] for f in BG_FILTERS}:
     st.session_state["bg_filter"] = "bw"
 bg_filter = st.session_state["bg_filter"]
 bg_color = st.session_state.get("bg_color", "#808080")
+bg_int = 1.0 if bg_filter == "none" else st.session_state.get("bg_intensity", 100) / 100
 _ver = st.session_state.get("seg_ver", 0)
-
-st.markdown("#### Chỉnh màu nền")
-st.caption("Chạm để xem trước hiệu ứng trên ảnh của bạn.")
-if st.session_state.get("bgf_prev_key") != (sid, bg_color, _ver):
-    try:
-        _pv = api_get(f"/session/{sid}/bgfilter_previews", params={"color": bg_color}).json()
-    except Exception:
-        _pv = []                                          # backend cũ hoặc lỗi -> lưới chỉ còn nút, không có ảnh
-    st.session_state["bgf_prev"] = {p["name"]: base64.b64decode(p["image"].split(",", 1)[1]) for p in _pv}
-    st.session_state["bgf_prev_key"] = (sid, bg_color, _ver)
-_prev = st.session_state["bgf_prev"]
-_cols = st.columns(3)
-for _i, _f in enumerate(BG_FILTERS):
-    with _cols[_i % 3], st.container(border=True):
-        if _f["name"] in _prev:
-            st.image(_prev[_f["name"]], use_container_width=True)
-        if st.button(_f["label"], key=f"bgf_{_f['name']}", use_container_width=True,
-                     type="primary" if _f["name"] == bg_filter else "secondary"):
-            st.session_state["bg_filter"] = _f["name"]
-            st.rerun()
-if bg_filter == "solid":
-    bg_color = st.color_picker("Màu nền", bg_color, key="bg_color")
-bg_int = 1.0
-if bg_filter != "none":
-    bg_int = st.slider("Cường độ hiệu ứng", 0, 100, 100, 5, format="%d%%", key="bg_intensity") / 100
 
 if st.session_state.get("bgf_key") != (sid, bg_filter, bg_color, _ver):
     st.session_state["bgf_img"] = base64.b64encode(api_get(
@@ -520,6 +496,39 @@ html = (VIEWER.replace("__ORIG__", a["orig"]).replace("__FG__", a["fg"])
         .replace("__BG__", a["bg"]).replace("__ALPHA__", a["alpha"])
         .replace("__BF__", st.session_state["bgf_img"]).replace("__S__", f"{bg_int:.3f}"))
 components.html(html, height=780, scrolling=False)
+
+# ---------------------------------------------------------------- chỉnh màu nền (lưới nhỏ dưới viewer, chọn là áp dụng ngay)
+st.markdown(
+    "<style>[class*='st-key-bgf_'] button{padding:.1rem .25rem;min-height:1.7rem;font-size:.78rem}"
+    "[class*='st-key-bgf_'] button p{font-size:.78rem}</style>", unsafe_allow_html=True)
+st.markdown("#### Chỉnh màu nền")
+if st.session_state.get("bgf_prev_key") != (sid, bg_color, _ver):
+    try:
+        _pv = api_get(f"/session/{sid}/bgfilter_previews", params={"color": bg_color}).json()
+    except Exception:
+        _pv = []                                          # backend cũ hoặc lỗi -> lưới chỉ còn nút, không có ảnh
+    st.session_state["bgf_prev"] = {p["name"]: base64.b64decode(p["image"].split(",", 1)[1]) for p in _pv}
+    st.session_state["bgf_prev_key"] = (sid, bg_color, _ver)
+_prev = st.session_state["bgf_prev"]
+_N = 6
+for _row in range(0, len(BG_FILTERS), _N):
+    _cols = st.columns(_N)
+    for _col, _f in zip(_cols, BG_FILTERS[_row:_row + _N]):
+        with _col:
+            if _f["name"] in _prev:
+                st.image(_prev[_f["name"]], use_container_width=True)
+            if st.button(_f["label"], key=f"bgf_{_f['name']}", use_container_width=True,
+                         type="primary" if _f["name"] == bg_filter else "secondary"):
+                st.session_state["bg_filter"] = _f["name"]
+                st.rerun()
+_c1, _c2 = st.columns([3, 1])
+with _c1:
+    if bg_filter != "none":
+        st.slider("Cường độ hiệu ứng", 0, 100, 100, 5, format="%d%%", key="bg_intensity")
+with _c2:
+    if bg_filter == "solid":
+        st.color_picker("Màu nền", bg_color, key="bg_color")
+
 
 # ---------------------------------------------------------------- tải về + debug
 d1, d2 = st.columns(2)
