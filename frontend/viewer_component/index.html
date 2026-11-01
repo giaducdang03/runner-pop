@@ -51,38 +51,56 @@
 const send = (type, data) => window.parent.postMessage(Object.assign({isStreamlitMessage: true, type}, data || {}), "*");
 const $ = id => document.getElementById(id);
 const load = src => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
-const px = i => { const c = document.createElement('canvas'); c.width = i.width; c.height = i.height;
-  const x = c.getContext('2d', {willReadFrequently: true}); x.drawImage(i, 0, 0); return x.getImageData(0, 0, i.width, i.height).data; };
+// Xử lý ở độ phân giải vừa đủ để hiển thị (canvas chỉ hiện tối đa ~1100 px) -> ít pixel hơn nhiều, kéo mượt hơn
+const MAX_SIDE = 1100;
+const px = (i, w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const x = c.getContext('2d', {willReadFrequently: true}); x.drawImage(i, 0, 0, w, h); return x.getImageData(0, 0, w, h).data; };
 
 const cv = $('cv'), ctx = cv.getContext('2d'), mode = $('mode'), wrap = $('wrap');
 const line = $('line'), knob = $('knob'), tag = $('tag'), tag2 = $('tag2'), sl = $('s'), sv = $('sv');
-let cur = {ver: null, bf: null}, io, F, B, A, BF, W = 0, H = 0, N = 0, out = null, D = null;
-let s = 1.0, split = 0.5, queue = Promise.resolve();
+let cur = {ver: null, bf: null}, io, W = 0, H = 0, N = 0, out = null, D = null;
+let C0 = null, CD = null, AL = null, Fp = null, Bp = null;     // C0 = a*F + (1-a)*B ; CD = (1-a)*(Bf - B) ; AL = alpha 0..1
+let s = 1.0, split = 0.5, queue = Promise.resolve(), pending = false;
 
 const fit = () => send('streamlit:setFrameHeight', {height: document.documentElement.scrollHeight});
 
-function render() {              // cùng công thức với backend: out = a*F + (1-a)*((1-s)*B + s*Bf)
-  if (!D) return;
+// out = a*F + (1-a)*((1-s)*B + s*Bf) = C0 + s*CD  -> mỗi pixel chỉ còn 1 phép nhân-cộng cho mỗi kênh (cùng công thức với backend)
+function buildC0() {
   for (let i = 0; i < N; i++) {
-    const a = A[4*i] / 255, k = 4*i;
-    D[k]   = a*F[k]   + (1-a)*((1-s)*B[k]   + s*BF[k]);
-    D[k+1] = a*F[k+1] + (1-a)*((1-s)*B[k+1] + s*BF[k+1]);
-    D[k+2] = a*F[k+2] + (1-a)*((1-s)*B[k+2] + s*BF[k+2]);
-    D[k+3] = 255;
+    const a = AL[i], k = 4*i, j = 3*i;
+    C0[j]   = a*Fp[k]   + (1-a)*Bp[k];
+    C0[j+1] = a*Fp[k+1] + (1-a)*Bp[k+1];
+    C0[j+2] = a*Fp[k+2] + (1-a)*Bp[k+2];
+  }
+}
+function buildCD(BF) {
+  for (let i = 0; i < N; i++) {
+    const w = 1 - AL[i], k = 4*i, j = 3*i;
+    CD[j]   = w*(BF[k]   - Bp[k]);
+    CD[j+1] = w*(BF[k+1] - Bp[k+1]);
+    CD[j+2] = w*(BF[k+2] - Bp[k+2]);
+  }
+}
+function render() {
+  if (!D) return;
+  for (let i = 0; i < N; i++) {          // D là Uint8ClampedArray: tự làm tròn và kẹp 0..255
+    const k = 4*i, j = 3*i;
+    D[k] = C0[j] + s*CD[j]; D[k+1] = C0[j+1] + s*CD[j+1]; D[k+2] = C0[j+2] + s*CD[j+2];
   }
   draw();
 }
+const scheduleRender = () => { if (pending) return; pending = true; requestAnimationFrame(() => { pending = false; render(); }); };
 function draw() {
   if (!out) return;
   const m = mode.value, wantW = m === 'side' ? 2*W : W;
   if (cv.width !== wantW) cv.width = wantW;            // đổi kích thước canvas sẽ xoá nội dung
-  if (m === 'side') { ctx.drawImage(io, 0, 0); ctx.putImageData(out, W, 0); }
+  if (m === 'side') { ctx.drawImage(io, 0, 0, W, H); ctx.putImageData(out, W, 0); }
   else if (m === 'after') ctx.putImageData(out, 0, 0);
-  else if (m === 'before') ctx.drawImage(io, 0, 0);
+  else if (m === 'before') ctx.drawImage(io, 0, 0, W, H);
   else {
     ctx.putImageData(out, 0, 0);
     const x = Math.round(split * W);
-    ctx.save(); ctx.beginPath(); ctx.rect(0, 0, x, H); ctx.clip(); ctx.drawImage(io, 0, 0); ctx.restore();
+    ctx.save(); ctx.beginPath(); ctx.rect(0, 0, x, H); ctx.clip(); ctx.drawImage(io, 0, 0, W, H); ctx.restore();
   }
   const showSplit = m === 'split';
   line.style.display = knob.style.display = showSplit ? '' : 'none';
@@ -98,15 +116,22 @@ async function apply(args) {
       load('data:image/jpeg;base64,' + args.orig), load('data:image/png;base64,' + args.fg),
       load('data:image/jpeg;base64,' + args.bg), load('data:image/png;base64,' + args.alpha),
       load('data:image/jpeg;base64,' + args.bf)]);
-    io = i0; W = io.width; H = io.height; N = W * H;
-    F = px(i1); B = px(i2); A = px(i3); BF = px(i4);
+    io = i0;
+    const k = Math.min(1, MAX_SIDE / Math.max(i0.width, i0.height));
+    W = Math.max(1, Math.round(i0.width * k)); H = Math.max(1, Math.round(i0.height * k)); N = W * H;
+    Fp = px(i1, W, H); Bp = px(i2, W, H);
+    const Ap = px(i3, W, H);
+    AL = new Float32Array(N); for (let i = 0; i < N; i++) AL[i] = Ap[4*i] / 255;
+    C0 = new Float32Array(3*N); CD = new Float32Array(3*N);
+    buildC0(); buildCD(px(i4, W, H));
     cv.width = W; cv.height = H;
     out = ctx.createImageData(W, H); D = out.data;
+    for (let i = 0; i < N; i++) D[4*i+3] = 255;
     s = args.s / 100; sl.value = Math.round(args.s); sv.textContent = Math.round(args.s) + '%';
     cur = {ver: args.ver, bf: args.bf_key};
   } else if (args.bf_key !== cur.bf) {                 // chỉ đổi hiệu ứng -> chỉ nạp lại nền đã lọc
     $('ld').style.display = '';
-    BF = px(await load('data:image/jpeg;base64,' + args.bf));
+    buildCD(px(await load('data:image/jpeg;base64,' + args.bf), W, H));
     cur.bf = args.bf_key;
   } else { fit(); return; }                            // rerun không đổi gì -> giữ nguyên trạng thái (vị trí kéo, chế độ xem)
   render();
@@ -118,7 +143,7 @@ window.addEventListener('message', e => {
   if (e.data && e.data.type === 'streamlit:render') queue = queue.then(() => apply(e.data.args)).catch(err => {
     $('ld').style.display = 'none'; console.error(err); });
 });
-sl.addEventListener('input', () => { s = sl.value / 100; sv.textContent = sl.value + '%'; render(); });   // kéo: cập nhật ngay trong trình duyệt
+sl.addEventListener('input', () => { s = sl.value / 100; sv.textContent = sl.value + '%'; scheduleRender(); });   // kéo: cập nhật ngay trong trình duyệt (tối đa 1 lần vẽ / khung hình)
 sl.addEventListener('change', () => send('streamlit:setComponentValue', {value: Number(sl.value), dataType: 'json'}));  // thả: báo Python (để tải ảnh / PDF dùng đúng cường độ)
 mode.addEventListener('change', draw);
 const move = e => { const r = wrap.getBoundingClientRect(); split = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)); draw(); };
