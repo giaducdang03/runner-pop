@@ -64,3 +64,10 @@ BIREFNET_SIZE = int(os.environ.get("BIREFNET_SIZE", "1024"))
 # Tên input của ONNX BiRefNet do rembg phát hành (đọc từ birefnet-general-lite.onnx, shape tĩnh
 # 1x3x1024x1024); rembg lấy get_inputs()[0].name, ở đây cố định để convert OpenVINO shape tĩnh.
 BIREFNET_INPUT_NAME = os.environ.get("BIREFNET_INPUT_NAME", "input_image")
+
+# --- đồ vật cầm trên tay ------------------------------------------------------
+HELD_ENABLE = os.environ.get("HELD_ENABLE", "1") != "0"
+POSE_WEIGHTS = os.environ.get("POSE_WEIGHTS", "yolov8s-pose.pt")
+POSE_IMGSZ = 960
+HAND_MIN_CONF = 0.3
+HAND_EXTRAP = 0.35          # nắm tay = cổ tay + 0.35 * (cổ tay − khuỷu)
