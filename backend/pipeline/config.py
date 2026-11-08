@@ -71,3 +71,12 @@ POSE_WEIGHTS = os.environ.get("POSE_WEIGHTS", "yolov8s-pose.pt")
 POSE_IMGSZ = 960
 HAND_MIN_CONF = 0.3
 HAND_EXTRAP = 0.35          # nắm tay = cổ tay + 0.35 * (cổ tay − khuỷu)
+POLE_MIN_SCORE = 0.5        # tỉ lệ mẫu trên tia có mặt cắt dạng thanh tối thiểu để nhận là gậy
+POLE_ANGLES = (45.0, 135.0)          # độ, 90 = thẳng xuống; 0.5° mỗi bước
+POLE_SEARCH = (0.06, 0.55)           # đoạn tia [r0, r1] * h tính từ nắm tay
+POLE_HAND_TOL = 0.03                 # dịch tia ±0.03h theo pháp tuyến, bước 6 px
+POLE_HALF_W = (0.002, 0.003, 0.005, 0.008, 0.012)   # nửa bề rộng gậy * h (0.012 để bắt gậy tre)
+POLE_BAR_CONTRAST = 0.05             # |Lab(tâm) − TB(Lab hai bên)| (Lab chia 255, ảnh blur σ=1.2)
+POLE_SIDE_RATIO = 0.7                # |Lab(trái) − Lab(phải)| < 0.7 * contrast (loại viền)
+POLE_GAP = 0.05                      # khoảng hụt tối đa (* h) khi dò đầu gậy
+POLE_GRIP_UP = 0.12                  # dò ngược lên trên nắm tay tối đa 0.12h (tay cầm)
