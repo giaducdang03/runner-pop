@@ -1,5 +1,11 @@
 """Dò gậy (gậy leo núi, gậy tre...) từ nắm tay: quét tia đi xuống từ mỗi tay, kiểm tra mặt cắt
-ngang dạng "thanh" (tâm khác hẳn hai bên, hai bên giống nhau) dọc theo tia."""
+ngang dạng "thanh" (tâm khác hẳn hai bên, hai bên giống nhau) dọc theo tia.
+
+Hai lượt:
+1. Quét xuống (nắm tay ở đầu trên gậy, trục trong POLE_ANGLES) -> phân xử chủ gậy -> cổng LSD.
+2. Tay chưa có gậy sau lượt 1: quét hai phía (POLE_LINE_ANGLES) - gậy là đường thẳng qua chỗ nắm, kéo dài
+   về cả hai phía (gậy cầm giữa thân, gậy gần nằm ngang); điểm = mật độ mẫu đạt trên đoạn đã dò được, xếp
+   hạng theo số mẫu đạt -> phân xử -> cổng LSD. Gậy lượt 1 giữ nguyên hình học như trước."""
 from __future__ import annotations
 
 import logging
@@ -28,19 +34,24 @@ _EXCLUDE_DEG = 3.0       # người thua bỏ các góc trong ±3° của gậy 
 _OWNER_DISK = 0.04       # bán kính đĩa xét mask quanh chỗ nắm (* h)
 _SAME_POLE_PAD = 6.0     # hai trục cách nhau < 2*hw + 6 px = cùng một gậy
 _BLUR_SIGMA = 1.2
+_LINE_STEP = 1.0         # độ, bước hướng trục khi quét hai phía (đường dò sau đó bám ngang và khớp lại trục)
+_LINE_REF_H = 750.0      # quét hai phía: người cao hơn mức này (px) thì giãn bước r / ox theo h / mức này
+_LINE_TRIES = 4          # quét hai phía: số lần dựng ứng viên tối đa mỗi tay (mỗi lần hỏng loại ±3° rồi thử tiếp)
+_LINE_CHUNK = 200_000    # số điểm mẫu tối đa mỗi khối khi quét hai phía (giới hạn bộ nhớ)
 
 
 @dataclass
 class Pole:
-    top: Tuple[float, float]     # đầu trên (gần/trên nắm tay), toạ độ ảnh làm việc
-    tip: Tuple[float, float]     # đầu gậy chạm đất
+    top: Tuple[float, float]     # đầu trên (gần/trên nắm tay; gậy hai phía: đầu cao hơn), toạ độ ảnh làm việc
+    tip: Tuple[float, float]     # đầu gậy chạm đất (gậy hai phía: đầu còn lại)
     half_w: float                # nửa bề rộng gậy (px)
-    score: float                 # tỉ lệ mẫu có mặt cắt dạng thanh trên đoạn tia tìm kiếm
+    score: float                 # quét xuống: tỉ lệ mẫu dạng thanh trên đoạn tia tìm kiếm;
+                                 # quét hai phía: mật độ mẫu đạt trên đoạn đã dò được
     owner: int                   # idx người cầm
 
     @property
     def angle(self) -> float:
-        """Góc trục gậy (độ), 90 = thẳng xuống."""
+        """Góc trục gậy top -> tip (độ), 90 = thẳng xuống, 0 = ngang sang phải."""
         return math.degrees(math.atan2(self.tip[1] - self.top[1], self.tip[0] - self.top[0]))
 
     def to_work(self, roi: "Roi") -> "Pole":
@@ -73,6 +84,9 @@ class _Scan:
     hws: np.ndarray          # nửa bề rộng (px) có nhiều mẫu đạt nhất theo góc
     excluded: List[float]    # góc bị loại (độ), ±_EXCLUDE_DEG quanh mỗi góc
     lost_to: List["Pole"]    # gậy tay này đã thua; ứng viên mới trùng gậy đó cũng bị loại
+    line: bool = False       # quét hai phía: angles là hướng trục, scores = số mẫu đạt (-1 = không đạt)
+    dens: Optional[np.ndarray] = None   # quét hai phía: mật độ mẫu đạt trên đoạn đã dò, theo góc
+    tries: int = 0           # quét hai phía: số lần đã dựng ứng viên
 
 
 @dataclass
@@ -119,6 +133,26 @@ def _support(lab: _Lab, pts: np.ndarray, n: np.ndarray, hws_px: np.ndarray) -> n
         bar = np.linalg.norm(c - 0.5 * (left + right), axis=-1)
         side = np.linalg.norm(left - right, axis=-1)
         out.append((bar > C.POLE_BAR_CONTRAST) & (side < C.POLE_SIDE_RATIO * bar))
+    return np.stack(out)
+
+
+def _support_fast(lab: _Lab, pts: np.ndarray, n: np.ndarray, hws_px: np.ndarray) -> np.ndarray:
+    """Như _support (cùng quy tắc lấy mẫu / ngưỡng) nhưng float32 và so bình phương, cho lượt quét hai phía."""
+    pts = pts.astype(np.float32)
+    n = n.astype(np.float32)
+    c = lab.sample(pts)
+    t2 = np.float32(C.POLE_BAR_CONTRAST ** 2)
+    r2 = np.float32(C.POLE_SIDE_RATIO ** 2)
+    out = []
+    for hw in hws_px:
+        off = np.float32(hw + _SIDE_PAD) * n
+        left = lab.sample(pts - off)
+        right = lab.sample(pts + off)
+        bar = c - 0.5 * (left + right)
+        side = left - right
+        b2 = np.einsum("...i,...i->...", bar, bar)
+        s2 = np.einsum("...i,...i->...", side, side)
+        out.append((b2 > t2) & (s2 < r2 * b2))
     return np.stack(out)
 
 
@@ -263,12 +297,21 @@ def _candidate(lab: _Lab, scan: _Scan) -> Optional[_Cand]:
         for ex in scan.excluded:
             sc[np.abs(scan.angles - ex) <= _EXCLUDE_DEG] = -1.0
         i = int(np.argmax(sc))
-        if sc[i] < C.POLE_MIN_SCORE:
-            return None
-        cand = _build(lab, scan, i, float(sc[i]))
+        if scan.line:
+            # điểm quét hai phía là số mẫu đạt, -1 = không đạt mật độ / chiều dài
+            if sc[i] <= 0 or scan.tries >= _LINE_TRIES:
+                return None
+            scan.tries += 1
+            cand = _build_line(lab, scan, i)
+        else:
+            if sc[i] < C.POLE_MIN_SCORE:
+                return None
+            cand = _build(lab, scan, i, float(sc[i]))
         if cand is not None and not any(_same_pole(cand.pole, q) for q in scan.lost_to):
             return cand
         scan.excluded.append(float(scan.angles[i]))   # gậy quá ngắn / trùng gậy đã thua
+        if cand is not None and scan.line:            # đường dò bám sang gậy đã thua: loại cả hướng của nó
+            scan.excluded.append(_orient(cand.pole))
 
 
 def _lsd_ok(lab: _Lab, pole: Pole) -> bool:
@@ -278,6 +321,44 @@ def _lsd_ok(lab: _Lab, pole: Pole) -> bool:
         return True
     cov = lab.lines.coverage(pole)
     return cov is None or cov >= C.POLE_LSD_MIN
+
+
+def _below_grip(pole: Pole, hand: np.ndarray) -> float:
+    """Chiều dài phần gậy phía dưới chỗ nắm: từ hình chiếu của tay lên trục tới đầu thấp hơn (tip), px."""
+    a, b = np.asarray(pole.top), np.asarray(pole.tip)
+    L = float(np.linalg.norm(b - a))
+    if L <= 0:
+        return 0.0
+    return L - float((np.asarray(hand) - a) @ (b - a)) / L
+
+
+def _lsd_trim(lab: _Lab, pole: Pole, h: float) -> Optional[Pole]:
+    """Gậy quét hai phía: cắt hai đầu về đoạn có mép LSD - đường dò bám có thể chạy quá đầu gậy qua cỏ / lá
+    (mặt cắt vẫn lác đác dạng thanh) nhưng ở đó gần như không có đoạn LSD song song. Mỗi đầu lùi vào tới mẫu
+    có đoạn LSD đầu tiên mà cửa sổ POLE_TAIL_WIN * h tính từ đó vào trong có độ phủ >= POLE_LINE_TRIM_COV.
+    Gậy còn lại ngắn hơn POLE_LINE_MIN_LEN * h thì trả None; LSD lỗi thì giữ nguyên."""
+    cov = lab.lines.covered(pole)
+    if cov is None or len(cov) < 2:
+        return pole
+    step = C.POLE_LSD_STEP / lab.lines.scale                    # px ảnh làm việc mỗi mẫu
+    win = max(1, int(round(C.POLE_TAIL_WIN * h / step)))
+    cs = np.concatenate([[0], np.cumsum(cov)])
+    M = len(cov)
+    j = np.arange(M)
+    fwd = (cs[np.minimum(j + win, M)] - cs[j]) / (np.minimum(j + win, M) - j)    # cửa sổ từ j đi về tip
+    bwd = (cs[j + 1] - cs[np.maximum(j + 1 - win, 0)]) / (j + 1 - np.maximum(j + 1 - win, 0))
+    ok_a = np.flatnonzero(cov & (fwd >= C.POLE_LINE_TRIM_COV))
+    ok_b = np.flatnonzero(cov & (bwd >= C.POLE_LINE_TRIM_COV))
+    if len(ok_a) == 0 or len(ok_b) == 0 or ok_b[-1] <= ok_a[0]:
+        return None
+    a, b = np.asarray(pole.top), np.asarray(pole.tip)
+    L = float(np.linalg.norm(b - a))
+    d = (b - a) / L
+    ua, ub = ok_a[0] * step, min(L, ok_b[-1] * step)
+    if ub - ua < C.POLE_LINE_MIN_LEN * h:
+        return None
+    top, tip = a + ua * d, a + ub * d
+    return replace(pole, top=(float(top[0]), float(top[1])), tip=(float(tip[0]), float(tip[1])))
 
 
 def _build(lab: _Lab, scan: _Scan, i: int, score: float) -> Optional[_Cand]:
@@ -306,6 +387,139 @@ def _build(lab: _Lab, scan: _Scan, i: int, score: float) -> Optional[_Cand]:
         return None
     pole = Pole(top=(float(top[0]), float(top[1])), tip=(float(tip[0]), float(tip[1])),
                 half_w=hw, score=score, owner=scan.person.idx)
+    return _Cand(scan, a, pole)
+
+
+def _orient(pole: Pole) -> float:
+    """Hướng trục trong [0, 180) độ (0 = ngang, 90 = dọc)."""
+    return float(np.degrees(np.arctan2(pole.tip[1] - pole.top[1], pole.tip[0] - pole.top[0])) % 180.0)
+
+
+def _scan_line(lab: _Lab, person: Person, hand) -> Optional[_Scan]:
+    """Quét hai phía: với mỗi hướng trục a (POLE_LINE_ANGLES) và độ dịch ox, lấy mẫu dọc hai nửa đường
+    thẳng qua chỗ nắm, r trong [r0, r1] * h về mỗi phía (bỏ ±r0 quanh tay cho nắm tay / găng). Mỗi phía lấy
+    chuỗi bám từ r0 (hụt tính từ r0, đứt khi hụt > POLE_GAP hoặc ra khỏi ảnh) - cùng quy tắc với _trace.
+    Mật độ = số mẫu đạt / số mẫu từ r0 tới mẫu đạt cuối (cộng hai phía); chiều dài = tổng r của mẫu đạt cuối
+    hai phía. Đạt khi mật độ >= POLE_LINE_MIN_SCORE và chiều dài >= POLE_LINE_MIN_LEN * h; xếp hạng theo số
+    mẫu đạt. Vector hoá theo khối hướng."""
+    h = float(person.body_h)
+    if h <= 0:
+        return None
+    hand = np.asarray(hand, np.float64)
+    hws_px = np.asarray(C.POLE_HALF_W, np.float64) * h
+    lo_a, hi_a = C.POLE_LINE_ANGLES
+    angles = np.arange(lo_a, hi_a + _LINE_STEP / 2, _LINE_STEP)
+    tol = C.POLE_HAND_TOL * h
+    g = max(1.0, h / _LINE_REF_H)                       # ảnh lớn: số mẫu không tăng theo h
+    oxs = np.arange(-tol, tol + 1, _OX_STEP * g)
+    rs = np.arange(C.POLE_SEARCH[0] * h, C.POLE_SEARCH[1] * h, _R_STEP * g)
+    R, K = len(rs), len(oxs)
+    if R == 0:
+        return None
+    gap_n = C.POLE_GAP * h / (_R_STEP * g)
+    sr = np.concatenate([rs, -rs])                      # 2R: phía +d rồi phía -d
+    idx = np.arange(R)
+    scores = np.full(len(angles), -1.0)
+    dens_out = np.zeros(len(angles))
+    best_ox = np.zeros(len(angles))
+    best_hw = np.full(len(angles), hws_px[0])
+    step = max(1, _LINE_CHUNK // (K * 2 * R))
+    for s0 in range(0, len(angles), step):
+        t = np.radians(angles[s0:s0 + step])
+        d = np.stack([np.cos(t), np.sin(t)], axis=1)                       # A x 2
+        n = np.stack([-d[:, 1], d[:, 0]], axis=1)
+        A = len(t)
+        pts = (hand + oxs[None, :, None, None] * n[:, None, None, :]
+               + sr[None, None, :, None] * d[:, None, None, :])             # A x K x 2R x 2
+        pts = pts.reshape(A, K, 2, R, 2)
+        ok = lab.inside(pts)                                               # A x K x 2 x R
+        sup_hw = _support_fast(lab, pts, n[:, None, None, None, :], hws_px) & ok[None]   # HW x A x K x 2 x R
+        sup = sup_hw.any(axis=0)
+        prev = np.maximum.accumulate(np.where(sup, idx, 0), axis=-1)        # mẫu đạt gần nhất (neo ở r0)
+        brk = ((idx - prev) > gap_n) | ~ok
+        b = np.where(brk.any(axis=-1), np.argmax(brk, axis=-1), R)        # A x K x 2: chỉ số đứt chuỗi
+        chain = idx < b[..., None]
+        hit = sup & chain
+        nh = hit.sum(axis=-1)                                              # A x K x 2
+        last = np.where(nh > 0, R - 1 - np.argmax(hit[..., ::-1], axis=-1), -1)
+        hits = nh.sum(axis=-1)                                             # A x K
+        ext = (last + 1).sum(axis=-1)
+        length = np.where(nh > 0, rs[np.maximum(last, 0)], 0.0).sum(axis=-1)
+        dens = hits / np.maximum(ext, 1)
+        # số mẫu đạt, hoà thì mật độ cao hơn thắng (dens <= 1 nên không đảo thứ tự số mẫu đạt)
+        rank = np.where((dens >= C.POLE_LINE_MIN_SCORE) & (length >= C.POLE_LINE_MIN_LEN * h), hits + 0.5 * dens, -1)
+        k = np.argmax(rank, axis=1)                                        # A
+        ai = np.arange(A)
+        scores[s0:s0 + A] = rank[ai, k]
+        dens_out[s0:s0 + A] = dens[ai, k]
+        best_ox[s0:s0 + A] = oxs[k]
+        hw_hits = (sup_hw & chain[None]).sum(axis=(-1, -2))[:, ai, k]       # HW x A
+        for j in np.flatnonzero(rank[ai, k] > 0):
+            best_hw[s0 + j] = _narrowest(hw_hits[:, j], hws_px)
+    return _Scan(person, hand, h, angles, scores, np.zeros((len(angles), 2)), best_ox, best_hw, [], [],
+                 line=True, dens=dens_out)
+
+
+def _center(lab: _Lab, path: np.ndarray, n: np.ndarray, hw: float) -> np.ndarray:
+    """Dời mỗi điểm đường dò theo pháp tuyến (±_OX_STEP px) về giữa gậy: chọn các độ lệch có mặt cắt dạng
+    thanh với độ tương phản tâm-hai bên >= 0.9 x lớn nhất của điểm đó, lấy trung bình (đường dò bám theo
+    gậy có thể chạy sát mép gậy khi tia quét cắt chéo bề rộng gậy). Điểm không có độ lệch nào đạt giữ nguyên."""
+    lats = np.arange(-_OX_STEP, _OX_STEP + 0.5, 1.0)
+    grid = path[:, None] + lats[None, :, None] * n                       # N x L x 2
+    c = lab.sample(grid)
+    off = (hw + _SIDE_PAD) * n
+    left, right = lab.sample(grid - off), lab.sample(grid + off)
+    bar = np.linalg.norm(c - 0.5 * (left + right), axis=-1)
+    side = np.linalg.norm(left - right, axis=-1)
+    good = (bar > C.POLE_BAR_CONTRAST) & (side < C.POLE_SIDE_RATIO * bar) & lab.inside(grid)
+    bar = np.where(good, bar, 0.0)
+    top = bar.max(axis=1, keepdims=True)
+    sel = good & (bar >= 0.9 * top)
+    cnt = sel.sum(axis=1)
+    shift = np.where(cnt > 0, (sel * lats[None]).sum(axis=1) / np.maximum(cnt, 1), 0.0)
+    return path + shift[:, None] * n
+
+
+def _build_line(lab: _Lab, scan: _Scan, i: int) -> Optional[_Cand]:
+    """Dò hai phía chỗ nắm theo hướng thứ i (mỗi phía bám từ r0, cắt đuôi thưa); hai đầu = điểm cuối hai
+    đường dò chiếu lên trục khớp (phía không dò được thì là chỗ nắm). top = đầu cao hơn trong ảnh. None nếu không phía nào dò
+    được hoặc |tip − top| < POLE_LINE_MIN_LEN * h."""
+    a, h = float(scan.angles[i]), scan.h
+    d, n = _dir(a)
+    o = scan.hand + scan.oxs[i] * n
+    hws_px = np.asarray(C.POLE_HALF_W, np.float64) * h
+    gap = C.POLE_GAP * h
+    diag = math.hypot(lab.w, lab.h)
+    lat = max(C.POLE_LAT_MIN_PX, C.POLE_LAT_HW * float(scan.hws[i]))
+    rs = np.arange(C.POLE_SEARCH[0] * h, diag, _R_STEP)
+    paths = []
+    for sgn in (1.0, -1.0):
+        p = _trace(lab, o, d, n, sgn * rs, hws_px, gap, lat)
+        paths.append(None if p is None else _trim_sparse_tail(p, o, d, h))
+    if paths[0] is None and paths[1] is None:
+        return None
+    # trục = đường thẳng khớp (PCA) qua các điểm đã bám (tia quét có thể lệch góc / lệch ngang vài px);
+    # hai đầu = chiếu điểm cuối hai đường dò lên trục, phía không dò được thì là hình chiếu của chỗ nắm
+    allp = _center(lab, np.concatenate([q for q in paths if q is not None]), n, float(scan.hws[i]))
+    c = allp.mean(axis=0)
+    u = np.linalg.svd(allp - c, full_matrices=False)[2][0] if len(allp) >= 2 else d
+    if float(u @ d) < 0:
+        u = -u
+    ori = math.degrees(math.atan2(u[1], u[0])) % 180.0
+    if not (C.POLE_LINE_ANGLES[0] <= ori <= C.POLE_LINE_ANGLES[1]):
+        return None                       # trục khớp ra ngoài prior hướng (vd. bám theo thanh nằm ngang)
+
+    def proj(pt):
+        return c + float((pt - c) @ u) * u
+    e0 = proj(paths[0][-1] if paths[0] is not None else scan.hand)
+    e1 = proj(paths[1][-1] if paths[1] is not None else scan.hand)
+    paths = [q for q in paths if q is not None]
+    if float(np.linalg.norm(e1 - e0)) < C.POLE_LINE_MIN_LEN * h:
+        return None
+    top, tip = (e0, e1) if e0[1] <= e1[1] else (e1, e0)
+    hw = _refine_hw(lab, allp, np.array([-u[1], u[0]]), hws_px)
+    pole = Pole(top=(float(top[0]), float(top[1])), tip=(float(tip[0]), float(tip[1])),
+                half_w=hw, score=float(scan.dens[i]), owner=scan.person.idx)
     return _Cand(scan, a, pole)
 
 
@@ -387,17 +601,33 @@ def find_poles(rgb: np.ndarray, persons: List[Person]) -> List[Pole]:
         if not any(p.hands for p in persons):
             return []
         lab = _Lab(rgb)
+        hands = [(p, hand) for p in persons for hand in p.hands]
         cands: Dict[int, Optional[_Cand]] = {}
-        k = 0
-        for p in persons:
-            for hand in p.hands:
-                scan = _scan_hand(lab, p, hand)
-                cands[k] = None if scan is None else _candidate(lab, scan)
-                k += 1
+        for k, (p, hand) in enumerate(hands):
+            scan = _scan_hand(lab, p, hand)
+            cands[k] = None if scan is None else _candidate(lab, scan)
         _resolve(lab, cands, rgb.shape[:2])
         # Cổng LSD đặt SAU phân xử chủ gậy (đo trên 40 ảnh gán nhãn: đặt trong vòng chọn góc để xếp hạng
         # lại không cứu thêm gậy thật nào, chỉ sinh thêm 4-8 gậy mới chưa kiểm chứng, phần lớn trông giả)
-        return [c.pole for c in cands.values() if c is not None and _lsd_ok(lab, c.pole)]
+        kept = {k: c for k, c in cands.items() if c is not None and _lsd_ok(lab, c.pole)}
+        if C.POLE_LINE_ANGLES is not None:
+            # lượt 2: tay chưa có gậy quét hai phía; ứng viên trùng gậy đã giữ bị loại (lost_to)
+            held = [c.pole for c in kept.values()]
+            line: Dict[int, Optional[_Cand]] = {}
+            for k, (p, hand) in enumerate(hands):
+                if k in kept:
+                    continue
+                scan = _scan_line(lab, p, hand)
+                if scan is not None:
+                    scan.lost_to.extend(held)
+                line[k] = None if scan is None else _candidate(lab, scan)
+            _resolve(lab, line, rgb.shape[:2])
+            for k, c in line.items():
+                if c is not None and _lsd_ok(lab, c.pole):
+                    pole = _lsd_trim(lab, c.pole, c.scan.h) if C.POLE_LSD_MIN > 0 else c.pole
+                    if pole is not None and _below_grip(pole, c.scan.hand) >= C.POLE_LINE_MIN_DOWN * c.scan.h:
+                        kept[k] = replace(c, pole=pole)
+        return [kept[k].pole for k in sorted(kept)]
     except Exception as e:  # noqa: BLE001
         log.warning("dò gậy thất bại, bỏ qua: %s", e)
         return []

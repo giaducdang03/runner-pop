@@ -142,6 +142,57 @@ def test_pole_to_work_and_polygon():
 
 
 
+
+# --- gậy cầm giữa thân / gần nằm ngang (quét hai phía nắm tay) ---------------
+
+def _pt(deg, r, o=HAND):
+    t = math.radians(deg)
+    return (int(round(o[0] + r * math.cos(t))), int(round(o[1] + r * math.sin(t))))
+
+
+def test_pole_gripped_mid_shaft_finds_both_ends():
+    """Gậy nắm ở giữa thân, hướng 30° (ngoài prior quét xuống): phần trên-trái 0.3h, phần dưới-phải 0.2h.
+    Hai đầu đều phải dò được; top là đầu cao hơn trong ảnh."""
+    rgb = _canvas()
+    a, b = _pt(30, -120), _pt(30, 80)
+    cv2.line(rgb, a, b, (20, 20, 20), 6)
+    found = poles.find_poles(rgb, [_person()])
+    assert len(found) == 1
+    pl = found[0]
+    assert math.dist(pl.top, a) <= 10 and math.dist(pl.tip, b) <= 10, pl
+    assert abs(_pole_angle(pl) - 30) <= 3
+    assert pl.owner == 0
+
+
+@pytest.mark.parametrize("deg", [25.0, 160.0])
+def test_nearly_horizontal_pole_found(deg):
+    rgb = _canvas()
+    end = _pt(deg, 130)
+    cv2.line(rgb, HAND, end, (20, 20, 20), 6)
+    found = poles.find_poles(rgb, [_person()])
+    assert len(found) == 1
+    assert abs(_pole_angle(found[0]) - deg) <= 3, found
+    assert math.dist(found[0].tip, end) <= 10, found
+
+
+def test_short_pole_accepted():
+    """Gậy ngắn 0.18h (nắm ở đầu trên) vẫn được nhận."""
+    rgb = _canvas()
+    end = _pt(80, 72)
+    cv2.line(rgb, HAND, end, (20, 20, 20), 6)
+    found = poles.find_poles(rgb, [_person()])
+    assert len(found) == 1
+    assert abs(math.dist(found[0].top, found[0].tip) - 72) <= 12, found
+
+
+@pytest.mark.parametrize("r0,r1", [(0, 40), (70, 142)])
+def test_short_or_detached_dash_rejected(r0, r1):
+    """Vệt ngắn 0.1h sát tay, hoặc vệt 0.18h nằm cách tay 0.175h (không nối với chỗ nắm): không phải gậy."""
+    rgb = _canvas()
+    cv2.line(rgb, _pt(70, r0), _pt(70, r1), (20, 20, 20), 6)
+    assert poles.find_poles(rgb, [_person()]) == []
+
+
 # --- kiểm tra gậy bằng đoạn LSD -----------------------------------------------
 
 def _soft_stripe():
@@ -280,16 +331,26 @@ def test_real_image_poles(monkeypatch):
     white_angles = [_pole_angle(pl) for pl in found if pl.owner == white.idx]
     assert any(abs(a - 111) <= 6 for a in white_angles), white_angles
 
-    # số gậy có giới hạn; người nhỏ ở hậu cảnh (thấp hơn nửa người chạy chính) không có gậy
-    assert len(found) <= 6, found
+    # số gậy có giới hạn; người nhỏ ở hậu cảnh (thấp hơn nửa người chạy chính) không có gậy.
+    # Lượt quét hai phía thêm tối đa 2 gậy thật (đã xem ảnh): gậy người áo đỏ giơ tay phải cầm dựng đứng
+    # (~92°, nắm ở giữa thân theo điểm tay của pose) và gậy tay trái người áo đỏ bên trái (~97°) -> trần 6 -> 8.
+    assert len(found) <= 8, found
+    named = set(map(id, mine))
+    named |= {id(pl) for pl in found if pl.owner == red.idx and abs(_pole_angle(pl) - 75) <= 6}
+    named |= {id(pl) for pl in found if pl.owner == white.idx and abs(_pole_angle(pl) - 111) <= 6}
+    for pl in found:
+        if id(pl) not in named:                     # gậy còn lại đều gần thẳng đứng, không phải đường chéo lạ
+            assert 80 <= _pole_angle(pl) <= 105, pl
     small = {p.idx for p in scene.persons if p.body_h < 0.5 * main.body_h}
     assert small and not any(pl.owner in small for pl in found), found
 
 
 @pytest.mark.real
 def test_real_image_false_pole_rejected_by_lsd(monkeypatch):
-    """photo_5454753: đường dò chạy dọc hàng rào / cành cây từ tay người chạy (gậy giả, độ phủ LSD 0.00)
-    phải bị cổng LSD loại -> người chính không có gậy ứng viên. Ảnh chạy như backend (chỉ thu nhỏ về
+    """photo_5454753: đường dò chạy dọc hàng rào / cành cây từ tay người chạy (gậy giả ~57°, độ phủ LSD 0.00)
+    phải bị cổng LSD loại. Người chạy cầm ngang gậy thật ở giữa thân bằng tay trái, gậy chếch ~161° (đầu
+    tay cầm trên-phải ~(565, 777), đầu dưới-trái ~(283, 873), đo trên ảnh): lượt quét hai phía được phép
+    tìm đúng gậy này, không được có ứng viên nào theo đường chéo giả. Ảnh chạy như backend (chỉ thu nhỏ về
     MAX_SIDE, ảnh 1600 px giữ nguyên)."""
     from backend.pipeline import config as C
     from backend.pipeline.detect import detect_scene, get_yolo
@@ -305,4 +366,46 @@ def test_real_image_false_pole_rejected_by_lsd(monkeypatch):
     scene = detect_scene(rgb)
     main = max(scene.persons, key=lambda p: p.body_h)
     assert main.hands, "cần có tay để bài test có ý nghĩa"
-    assert not scene.pole_candidates.get(main.idx), scene.pole_candidates
+    h = main.body_h
+    for pl in scene.pole_candidates.get(main.idx, []):
+        ori = _pole_angle(pl) % 180
+        assert abs(ori - 57) > 15, pl                       # không còn đường chéo giả
+        assert abs(ori - 161) <= 8, pl                      # chỉ có gậy cầm ngang
+        ends = sorted([pl.top, pl.tip])                     # theo x: đầu trái, đầu phải
+        assert math.dist(ends[0], (283, 873)) <= 0.05 * h, pl
+        assert math.dist(ends[1], (565, 777)) <= 0.05 * h, pl
+
+
+@pytest.mark.real
+def test_real_image_pole_held_mid_shaft(monkeypatch):
+    """photo_5377501: người chạy bên trái cầm hai gậy gập (chồng nhau) ở giữa thân bằng tay trái, gậy chếch
+    ~25° dưới phương ngang, chĩa phải - xuống, kéo dài hai phía găng tay (đầu trái ~(579, 525), đầu phải
+    ~(877, 664), đo trên ảnh 1600 px). Phải có gậy ứng viên đi qua chỗ nắm tay trái, đúng hướng; tay đặt
+    trước ngực không sinh gậy (đường qua thân bị cổng LSD loại)."""
+    from backend.pipeline import config as C
+    from backend.pipeline.detect import detect_scene, get_yolo
+    from backend.pipeline.imageio import resize_to_max_side
+    monkeypatch.setattr(C, "POLE_ENABLE", True)
+    try:
+        get_yolo(C.POSE_WEIGHTS)
+        get_yolo(C.YOLO_WEIGHTS)
+    except Exception as e:  # noqa: BLE001
+        pytest.skip(f"không nạp được weights YOLO: {e}")
+    bgr = cv2.imread(str(Path(__file__).parent / "data" / "photo_5377501.jpg"))
+    rgb = resize_to_max_side(np.ascontiguousarray(bgr[..., ::-1]))
+    scene = detect_scene(rgb)
+    main = max(scene.persons, key=lambda p: p.body_h)
+    assert len(main.hands) == 2, main.hands
+    h = main.body_h
+    grip = max(main.hands, key=lambda p: p[1])           # tay trái cầm gậy (thấp hơn), tay kia trước ngực
+    chest = min(main.hands, key=lambda p: p[1])
+    mine = scene.pole_candidates.get(main.idx, [])
+    assert len(mine) == 1, mine
+    pl = mine[0]
+    a, b = np.asarray(pl.top, float), np.asarray(pl.tip, float)
+    d = (b - a) / np.linalg.norm(b - a)
+    off = abs(d[0] * (grip[1] - a[1]) - d[1] * (grip[0] - a[0]))
+    assert off <= 0.03 * h, (pl, grip)
+    assert abs(_pole_angle(pl) % 180 - 25) <= 8, pl
+    assert _seg_dist(grip, pl.top, pl.tip) <= 0.03 * h       # chỗ nắm nằm trong đoạn gậy (gậy hai phía)
+    assert _seg_dist(chest, pl.top, pl.tip) > 0.1 * h, pl     # không phải gậy từ tay trước ngực

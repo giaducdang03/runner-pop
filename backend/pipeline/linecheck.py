@@ -59,6 +59,19 @@ class LineIndex:
                 self._failed = True
         return self._segs
 
+    def covered(self, pole: "Pole") -> Optional[np.ndarray]:
+        """Mẫu dọc trục top -> tip (mỗi POLE_LSD_STEP px ở độ phân giải chuẩn) có đoạn LSD song song; None nếu lỗi."""
+        try:
+            segs = self.segments()
+            if segs is None:
+                return None
+            s = self.scale
+            return _covered(segs, np.asarray(pole.top, np.float64) * s, np.asarray(pole.tip, np.float64) * s,
+                            float(pole.half_w) * s + C.POLE_LSD_MARGIN)
+        except Exception as e:  # noqa: BLE001
+            log.warning("đo đoạn LSD dọc gậy thất bại: %s", e)
+            return None
+
     def coverage(self, pole: "Pole") -> Optional[float]:
         """Độ phủ LSD (0..1) của trục gậy; None nếu lỗi."""
         try:
@@ -76,20 +89,27 @@ class LineIndex:
 def _coverage(segs: np.ndarray, top: np.ndarray, tip: np.ndarray, tol: float) -> float:
     """Tỉ lệ mẫu u = 0, STEP, ... <= L trên trục top + u*d có đoạn song song (bên nào cũng được)
     đi qua trong khoảng |v| <= tol (v nội suy tuyến tính dọc đoạn)."""
+    cov = _covered(segs, top, tip, tol)
+    return float(cov.mean()) if len(cov) else 0.0
+
+
+def _covered(segs: np.ndarray, top: np.ndarray, tip: np.ndarray, tol: float) -> np.ndarray:
+    """Mảng bool theo mẫu u = 0, STEP, ... <= L trên trục: mẫu có đoạn LSD song song đi qua (xem _coverage)."""
     L = float(np.linalg.norm(tip - top))
     if L <= 0:
-        return 0.0
+        return np.zeros(0, bool)
     d = (tip - top) / L
     n = np.array([-d[1], d[0]])
     us = np.arange(0, L + 1e-6, C.POLE_LSD_STEP)
+    miss = np.zeros(len(us), bool)
     if len(segs) == 0:
-        return 0.0
+        return miss
     p1, p2 = segs[:, :2] - top, segs[:, 2:] - top
     sd = p2 - p1
     sl = np.hypot(sd[:, 0], sd[:, 1]) + 1e-9
     keep = np.abs(sd @ d) / sl >= math.cos(math.radians(C.POLE_LSD_PAR_DEG))
     if not keep.any():
-        return 0.0
+        return miss
     u1, v1 = p1[keep] @ d, p1[keep] @ n
     u2, v2 = p2[keep] @ d, p2[keep] @ n
     sw = u2 < u1
@@ -97,9 +117,9 @@ def _coverage(segs: np.ndarray, top: np.ndarray, tip: np.ndarray, tol: float) ->
     v1, v2 = np.where(sw, v2, v1), np.where(sw, v1, v2)
     near = (u2 >= -tol) & (u1 <= L + tol) & (np.minimum(v1, v2) <= tol) & (np.maximum(v1, v2) >= -tol)
     if not near.any():
-        return 0.0
+        return miss
     u1, v1, u2, v2 = u1[near], v1[near], u2[near], v2[near]
     du = np.maximum(u2 - u1, 1e-6)
     inr = (us[None] >= u1[:, None]) & (us[None] <= u2[:, None])                   # K x M
     vi = v1[:, None] + (v2 - v1)[:, None] * (us[None] - u1[:, None]) / du[:, None]
-    return float((inr & (np.abs(vi) <= tol)).any(axis=0).mean())
+    return (inr & (np.abs(vi) <= tol)).any(axis=0)

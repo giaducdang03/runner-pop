@@ -91,6 +91,14 @@ POLE_TAIL_DENSE = 0.8                # cửa sổ có mật độ >= mức này 
 POLE_TAIL_SPARSE = 0.6               # phần sau cặp cửa sổ đặc cuối có mật độ TB < mức này = đuôi qua cỏ, bỏ
 POLE_LAT_MIN_PX = 8.0                # khi dò đầu gậy được lệch ngang khỏi tia tối đa
 POLE_LAT_HW = 3.0                    # max(POLE_LAT_MIN_PX, POLE_LAT_HW * hw) px, ±1 px mỗi bước
+# Quét hai phía nắm tay (gậy cầm giữa thân, gậy gần nằm ngang): chạy cho tay chưa có gậy sau lượt quét xuống
+# + cổng LSD. Gậy = đường thẳng qua chỗ nắm, hai phía (mỗi phía có thể ngắn / ra khỏi ảnh), bỏ qua ±r0 quanh tay.
+POLE_LINE_ANGLES = (15.0, 165.0)     # hướng trục (độ, 0 = ngang, 90 = dọc); None = tắt lượt quét hai phía
+POLE_LINE_MIN_SCORE = 0.6            # mật độ mẫu đạt trên đoạn đã dò được (không chia cho cả đoạn tìm kiếm)
+POLE_LINE_MIN_LEN = 0.15             # tổng chiều dài hai phía (|tip − top|) tối thiểu * h
+POLE_LINE_MIN_DOWN = 0.12            # phần gậy dưới chỗ nắm (tới đầu thấp hơn) tối thiểu * h: đường chỉ đi lên trên
+                                     # tay / quanh tay là cánh tay, đùi, cột đèn (trên mẫu: giả <= 0.08h, thật >= 0.17h)
+POLE_LINE_TRIM_COV = 0.5             # cắt hai đầu gậy hai phía về đoạn có độ phủ LSD (cửa sổ POLE_TAIL_WIN) >= mức này
 # Kiểm tra gậy bằng đoạn thẳng LSD (linecheck.py): độ phủ trục gậy bởi đoạn LSD song song, gần trục
 POLE_LSD_MIN = 0.25                  # độ phủ tối thiểu để giữ gậy (gậy thật ~0.6, giả ~0.02); 0 = tắt kiểm tra (như trước)
 POLE_LSD_PAR_DEG = 4.0               # đoạn LSD lệch góc so với trục <= 4° mới tính là song song
