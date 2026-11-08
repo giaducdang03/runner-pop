@@ -83,7 +83,7 @@ def test_detect_persons_passes_device_kwargs_to_model(monkeypatch):
     kw = calls[0][1]
     assert kw["device"] == "cuda:0" and kw["half"] is True
     assert kw["verbose"] is False and kw["retina_masks"] is True
-    assert kw["classes"] == [C.PERSON_CLASS]
+    assert kw["classes"] == [C.PERSON_CLASS] + C.HELD_CLASSES
 
 
 def test_detect_falls_back_to_cpu_when_gpu_predict_raises(monkeypatch):

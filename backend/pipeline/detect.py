@@ -14,6 +14,7 @@ import numpy as np
 from . import accel
 from . import config as C
 from . import preprocess as PP
+from .held import HeldObject, attach_objects
 from .masks import box_to_mask
 from .schema import Person, Scene
 from .select import suggest_person
@@ -103,15 +104,20 @@ def get_yolo(weights: str = C.YOLO_WEIGHTS, device: Optional[accel.Device] = Non
 
 
 def _detect_with_device(det_rgb: np.ndarray, weights: str, conf: float, imgsz: int,
-                        device: accel.Device, stage=None) -> Tuple[List[Person], accel.Device]:
+                        device: accel.Device, stage=None,
+                        objects_out: Optional[list] = None) -> Tuple[List[Person], accel.Device]:
+    """`objects_out` (nếu có) nhận danh sách vật COCO ứng viên cầm tay của lần chạy thành công."""
     def run(dev: accel.Device) -> List[Person]:
         model = get_yolo(weights, dev)
         kw = predict_kwargs(dev)
         if not kw["half"]:
             kw.pop("half")      # ultralytics cảnh báo 'half' deprecated khi truyền half=False
-        res = model.predict(det_rgb, imgsz=imgsz, conf=conf, classes=[C.PERSON_CLASS],
+        classes = [C.PERSON_CLASS] + (C.HELD_CLASSES if C.HELD_ENABLE else [])
+        res = model.predict(det_rgb, imgsz=imgsz, conf=conf, classes=classes,
                             verbose=False, retina_masks=True,   # mask độ phân giải gốc -> không mất tay/chân mảnh
                             **kw)[0]
+        if objects_out is not None:
+            objects_out[:] = _objects_from_result(res, det_rgb) if C.HELD_ENABLE else []
         return _persons_from_result(res, det_rgb)
 
     cpu = accel.resolve("cpu")
@@ -131,8 +137,30 @@ def detect_persons(det_rgb: np.ndarray, weights: str = C.YOLO_WEIGHTS,
     return _detect_with_device(det_rgb, weights, conf, imgsz, device)[0]
 
 
-def _persons_from_result(res, det_rgb: np.ndarray) -> List[Person]:
+def _split_by_class(res):
+    """Chỉ số các box là người / là vật khác. Không có `boxes.cls` (kết quả cũ, fake) -> mọi box là người."""
+    n = len(res.boxes)
+    cls = getattr(res.boxes, "cls", None)
+    if cls is None:
+        return list(range(n)), []
+    cls = np.asarray(cls.cpu().numpy()).astype(int)
+    return ([i for i in range(n) if cls[i] == C.PERSON_CLASS],
+            [i for i in range(n) if cls[i] != C.PERSON_CLASS])
+
+
+def _box_mask(masks, i: int, bx, det_rgb: np.ndarray) -> Tuple[tuple, Optional[np.ndarray]]:
+    """Box (cắt vào ảnh) và mask 0/255 cỡ ảnh của detection thứ i."""
     h, w = det_rgb.shape[:2]
+    x1, y1, x2, y2 = [int(round(v)) for v in bx]
+    box = (max(0, x1), max(0, y1), min(w, x2), min(h, y2))
+    m = None
+    if masks is not None:
+        m = cv2.resize(masks[i], (w, h), interpolation=cv2.INTER_LINEAR)
+        m = (m > 0.5).astype(np.uint8) * 255
+    return box, m
+
+
+def _persons_from_result(res, det_rgb: np.ndarray) -> List[Person]:
     persons: List[Person] = []
     if res.boxes is None or len(res.boxes) == 0:
         return persons
@@ -141,20 +169,31 @@ def _persons_from_result(res, det_rgb: np.ndarray) -> List[Person]:
     confs = res.boxes.conf.cpu().numpy()
     masks = res.masks.data.cpu().numpy() if res.masks is not None else None   # N x mh x mw (0/1)
 
-    for i, (bx, cf) in enumerate(zip(boxes, confs)):
-        x1, y1, x2, y2 = [int(round(v)) for v in bx]
-        x1, y1 = max(0, x1), max(0, y1)
-        x2, y2 = min(w, x2), min(h, y2)
-        m = None
-        if masks is not None:
-            m = cv2.resize(masks[i], (w, h), interpolation=cv2.INTER_LINEAR)
-            m = (m > 0.5).astype(np.uint8) * 255
-        persons.append(Person(idx=i, box=(x1, y1, x2, y2), conf=float(cf), mask=m))
+    for i in _split_by_class(res)[0]:
+        box, m = _box_mask(masks, i, boxes[i], det_rgb)
+        persons.append(Person(idx=i, box=box, conf=float(confs[i]), mask=m))
 
     persons.sort(key=lambda p: p.area, reverse=True)
     for new_idx, p in enumerate(persons):
         p.idx = new_idx
     return persons
+
+
+def _objects_from_result(res, det_rgb: np.ndarray) -> List[HeldObject]:
+    """Các box không phải người (chai, điện thoại, túi, ...) làm ứng viên vật cầm tay."""
+    if res.boxes is None or len(res.boxes) == 0 or getattr(res.boxes, "cls", None) is None:
+        return []
+    boxes = res.boxes.xyxy.cpu().numpy()
+    confs = res.boxes.conf.cpu().numpy()
+    cls = res.boxes.cls.cpu().numpy().astype(int)
+    masks = res.masks.data.cpu().numpy() if res.masks is not None else None
+    names = getattr(res, "names", None) or {}
+    out: List[HeldObject] = []
+    for i in _split_by_class(res)[1]:
+        box, m = _box_mask(masks, i, boxes[i], det_rgb)
+        out.append(HeldObject(cls=int(cls[i]), name=str(names.get(int(cls[i]), cls[i])),
+                              box=box, conf=float(confs[i]), mask=m))
+    return out
 
 
 def _draw_boxes(rgb: np.ndarray, persons: List[Person]) -> np.ndarray:
@@ -204,6 +243,7 @@ def detect_scene(rgb: np.ndarray, preprocess: str = "auto",
             pass
 
     persons: List[Person] = []
+    objects: list = []
     device = accel.resolve(device_mode)
     attempt = 0
     for attempt, (conf, imgsz) in enumerate(C.DETECT_ATTEMPTS):
@@ -212,7 +252,8 @@ def detect_scene(rgb: np.ndarray, preprocess: str = "auto",
             det_img = _run_chain_traced(trace, rgb, names, prefix=f"Thử lại {attempt}: ")
         label = "YOLO-seg phát hiện người" + (f" (thử lại {attempt})" if attempt else "")
         with trace.stage("yolo", label, note=f"conf ≥ {conf}, imgsz {imgsz}") as s:
-            persons, device = _detect_with_device(det_img, weights, conf, imgsz, device, stage=s)
+            persons, device = _detect_with_device(det_img, weights, conf, imgsz, device, stage=s,
+                                                   objects_out=objects)
             s.set_device(device)
             s.note += f" → {len(persons)} người · " + (
                 "CPU" if device.kind == "cpu" else f"{device.backend}: {device.name}")
@@ -237,17 +278,18 @@ def detect_scene(rgb: np.ndarray, preprocess: str = "auto",
         from .held import merge_pole
         from .poles import find_poles
         with trace.stage("held", "Đồ vật cầm tay (gậy, …)") as s:
-            n_poles = 0
+            n_poles = n_objs = 0
             try:
                 for pole in find_poles(rgb, persons):
                     merge_pole(persons[pole.owner], pole, rgb.shape)
                     n_poles += 1
-                s.note = f"{n_poles} gậy"
+                n_objs = attach_objects(persons, objects)
+                s.note = f"{n_poles} gậy, {n_objs} vật"
             except Exception as e:      # không để lỗi gộp vật cầm tay làm hỏng request
                 log.warning("held: %s", e)
                 s.note = f"lỗi, bỏ qua vật cầm tay: {e}"
-            if n_poles:
-                best = persons[0] if len(persons) == 1 else max(persons, key=lambda q: len(q.poles))
+            if n_poles or n_objs:
+                best = persons[0] if len(persons) == 1 else max(persons, key=lambda q: len(q.held))
                 s.overlay(rgb, best.mask if best.mask is not None else box_to_mask(best.box, rgb.shape))
 
     suggested = suggest_person(Scene(rgb=rgb, persons=persons, quality=qd)) if persons else 0

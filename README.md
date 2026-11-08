@@ -154,6 +154,16 @@ Lỗi bền (build model hỏng) được nhớ trong `ACCEL_EXPORT_RETRY_S` gi�
 3. Kéo **cường độ nền đen trắng** (realtime, không gọi lại backend) và dùng chế độ **So sánh** để kéo thanh trước/sau.
 4. Tải ảnh kết quả (PNG/JPEG) ở cường độ mong muốn. Mục *Debug* cho xem alpha và trimap.
 
+## Vật cầm tay
+
+Ngoài người, YOLO-seg còn phát hiện vật COCO (chai, điện thoại, túi, ...). YOLO-pose (`yolov8s-pose.pt`) cho vị trí nắm tay;
+vật nằm gần nắm tay (và gậy dò được từ nắm tay) được gộp vào mask người nên không bị làm xám cùng nền.
+
+- `HELD_ENABLE` (mặc định `1`): đặt `0` để tắt hẳn (không chạy pose, YOLO chỉ tìm người, kết quả như trước).
+- `HELD_CLASSES`: danh sách id lớp COCO coi là vật cầm tay, cách nhau bởi dấu phẩy (mặc định gồm túi, chai, cốc, điện thoại, ...; xem `config.py`).
+- `POSE_WEIGHTS` (mặc định `yolov8s-pose.pt`): trọng số YOLO-pose; tải tự động lần đầu.
+- Ngưỡng tinh chỉnh (`HELD_MIN_CONF`, `HELD_HAND_DIST`, `HELD_TOUCH_FRAC`, `HELD_MAX_AREA`) nằm trong `backend/pipeline/config.py`.
+
 ## Kiến trúc – phần nào nặng, phần nào nhẹ
 
 | Bước | Nơi chạy | Ghi chú |

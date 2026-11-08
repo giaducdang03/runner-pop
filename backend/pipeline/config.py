@@ -84,3 +84,12 @@ POLE_MIN_LEN = 0.2                   # gậy dò được (|tip − top|) ngắn
 POLE_HW_NARROW = 0.9                 # chọn bề rộng hẹp nhất có số mẫu đạt >= 0.9 × tốt nhất
 POLE_LAT_MIN_PX = 8.0                # khi dò đầu gậy được lệch ngang khỏi tia tối đa
 POLE_LAT_HW = 3.0                    # max(POLE_LAT_MIN_PX, POLE_LAT_HW * hw) px, ±1 px mỗi bước
+
+# Lớp COCO coi là vật cầm tay (YOLO-seg phát hiện cùng lúc với người); mặc định bỏ phương tiện, động vật, đồ nội thất lớn
+_HELD_DEFAULT = ("24,25,26,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,"
+                 "50,51,52,53,54,55,63,64,65,66,67,73,74,75,76,77,78,79")
+HELD_CLASSES = [int(c) for c in os.environ.get("HELD_CLASSES", _HELD_DEFAULT).replace(" ", "").split(",") if c]
+HELD_MIN_CONF = 0.25
+HELD_HAND_DIST = 0.08       # box vật cách nắm tay <= 0.08 * chiều cao thân người
+HELD_TOUCH_FRAC = 0.03      # không có tay: mask vật chạm mask người nới 0.03 * cạnh dài box vật
+HELD_MAX_AREA = 1.5         # diện tích vật <= 1.5 * diện tích mask người
