@@ -1,0 +1,17 @@
+# Override GPU NVIDIA (CUDA) — chưa kiểm thử trên phần cứng thật. Cần driver NVIDIA + NVIDIA Container Toolkit
+# (Windows: Docker Desktop + WSL2 đã có sẵn). Dùng kèm docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.cuda.yml up --build
+services:
+  backend:
+    build:
+      target: cuda
+    image: runnerpop-backend:cuda
+    environment:
+      ACCEL_BACKEND: cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

@@ -7,3 +7,6 @@ __pycache__/
 
 # ảnh thử + kết quả thử (nặng, không đưa vào git)
 samples/
+
+# cache model của docker compose (bind mount ra host)
+docker-data/

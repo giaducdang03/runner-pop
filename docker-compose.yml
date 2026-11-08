@@ -1,0 +1,47 @@
+# Mặc định: backend chạy CPU.  docker compose up --build  ->  http://localhost:8501
+# GPU Intel:   docker compose -f docker-compose.yml -f docker-compose.intel.yml up --build
+# GPU NVIDIA:  docker compose -f docker-compose.yml -f docker-compose.cuda.yml up --build
+#
+# Cache model (BiRefNet ~224 MB, OpenVINO IR, numba JIT) nằm trên host ở ${RUNNERPOP_CACHE:-./docker-data/cache},
+# xoá thư mục đó để tải/xuất lại từ đầu.
+name: runnerpop
+
+services:
+  backend:
+    build:
+      context: .
+      target: cpu
+    image: runnerpop-backend:cpu
+    environment:
+      ACCEL_BACKEND: cpu
+      ACCEL_CACHE_DIR: /cache/accel
+      U2NET_HOME: /cache/rembg
+      REMBG_HOME: /cache/rembg
+      NUMBA_CACHE_DIR: /cache/numba
+      DEFAULT_ENGINE: ${DEFAULT_ENGINE:-birefnet}
+      MAX_SESSIONS: ${MAX_SESSIONS:-8}
+    volumes:
+      - ${RUNNERPOP_CACHE:-./docker-data/cache}:/cache
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      target: frontend
+    image: runnerpop-frontend:latest
+    environment:
+      API_URL: http://backend:8000
+    ports:
+      - "${FRONTEND_PORT:-8501}:8501"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped

@@ -27,6 +27,36 @@ streamlit run frontend/app.py
 Biến môi trường tuỳ chọn: `YOLO_WEIGHTS` (mặc định `yolov8s-seg.pt`, có thể dùng `yolov8n-seg.pt` cho nhanh hơn),
 `API_URL` (mặc định `http://127.0.0.1:8000`).
 
+## Chạy bằng Docker
+
+Cần Docker Desktop (Windows/macOS) hoặc Docker Engine + compose v2 (Linux). Đứng ở thư mục gốc project:
+
+```powershell
+# CPU – mọi máy
+docker compose up --build
+
+# GPU Intel (Arc / iGPU, OpenVINO)
+docker compose -f docker-compose.yml -f docker-compose.intel.yml up --build
+
+# GPU NVIDIA (CUDA) – chưa kiểm thử trên phần cứng thật, cần NVIDIA Container Toolkit
+docker compose -f docker-compose.yml -f docker-compose.cuda.yml up --build
+```
+
+Mở `http://localhost:8501` (giao diện); backend ở `http://localhost:8000`. Dừng: `docker compose down`.
+
+- Một `Dockerfile`, nhiều target: `frontend` (Streamlit, không có torch), `cpu`, `intel` (base `openvino/ubuntu24_runtime`, Python 3.12), `cuda`.
+- Cache model nằm **trên host** ở `./docker-data/cache` (BiRefNet ~224 MB tải lần đầu, OpenVINO IR, cache JIT numba);
+  xoá thư mục này để tải/xuất lại. Đổi chỗ bằng biến `RUNNERPOP_CACHE`. Trọng số YOLO có sẵn trong image.
+- Biến tuỳ chỉnh khi chạy compose: `DEFAULT_ENGINE`, `MAX_SESSIONS`, `BACKEND_PORT`, `FRONTEND_PORT`, `RUNNERPOP_CACHE`,
+  ví dụ `$env:DEFAULT_ENGINE="cf"; docker compose up`.
+- GPU Intel trên **Windows (Docker Desktop + WSL2)**: GPU đi qua `/dev/dxg` và driver từ `/usr/lib/wsl` – đã cấu hình sẵn
+  trong `docker-compose.intel.yml`. Host **Linux**: đổi sang `devices: ["/dev/dri:/dev/dri"]` và bỏ mount `/usr/lib/wsl` (xem chú thích trong file).
+  Kiểm tra GPU có vào container không: `curl http://localhost:8000/health` → `"backend": "openvino"`, `"kind": "gpu"`.
+- Dùng `docker run` trực tiếp trong Git Bash thì thêm `MSYS_NO_PATHCONV=1`, nếu không đường dẫn `/usr/lib/wsl` bị đổi thành đường dẫn Windows.
+- Mac: Docker không truy cập được GPU Apple (Metal), container chỉ chạy CPU; muốn dùng MPS hãy chạy trực tiếp như mục *Chạy*.
+- Image khá nặng (backend ~4 GB, `cuda` còn hơn nhiều): Docker Desktop lưu image trong ổ đĩa ảo, nếu ổ C hẹp hãy đổi
+  *Settings → Resources → Advanced → Disk image location* sang ổ khác.
+
 ## Gia tốc phần cứng
 
 CPU **luôn** chạy được. GPU là tuỳ chọn: thiếu gói hay driver của backend nào thì backend đó bị coi là không có và app tự chạy bằng CPU.
@@ -38,9 +68,9 @@ CPU **luôn** chạy được. GPU là tuỳ chọn: thiếu gói hay driver c�
 | `cpu` | Mọi máy | PyTorch CPU | rembg + onnxruntime CPU | `requirements.txt` | **Đã kiểm thử trên phần cứng thật** (Intel Core Ultra 7 155H, Windows 11; phiên bản ở bảng dưới) |
 | `cuda` | GPU NVIDIA | PyTorch CUDA (`half=True`) | onnxruntime-gpu (`CUDAExecutionProvider`, FP32) | `requirements-cuda.txt` | **chưa kiểm thử trên phần cứng thật — chỉ có test giả lập** |
 | `mps` | Mac Apple Silicon | PyTorch MPS (FP32) | onnxruntime (`CoreMLExecutionProvider`, FP32) | `requirements-mac.txt` | **chưa kiểm thử trên phần cứng thật — chỉ có test giả lập** |
-| `openvino` | GPU Intel (Arc / iGPU) | OpenVINO IR (FP16, xuất một lần vào `ACCEL_CACHE_DIR`) | OpenVINO compile ONNX (FP16) | `requirements-intel.txt` | **chưa kiểm thử trên phần cứng thật — chỉ có test giả lập** |
+| `openvino` | GPU Intel (Arc / iGPU) | OpenVINO IR (FP16, xuất một lần vào `ACCEL_CACHE_DIR`) | OpenVINO compile ONNX (FP16) | `requirements-intel.txt` | **đã chạy thật trong Docker** (target `intel`, iGPU Core Ultra 7 155H qua WSL2): YOLO + BiRefNet chạy trên GPU, không rơi về CPU; chưa chạy thật ngoài Docker |
 
-Máy phát triển không có GPU backend nào (`accel.available_backends()` trả `{}`), nên chưa có số đo hay kết quả chạy thật cho `cuda`, `mps`, `openvino`.
+Ngoài Docker, máy phát triển không có GPU backend nào (`accel.available_backends()` trả `{}`), nên chưa có số đo hay kết quả chạy thật cho `cuda`, `mps`. `openvino` đã chạy thật qua container `intel` (mục *Chạy bằng Docker*).
 
 #### Phiên bản driver / runtime
 
@@ -49,7 +79,7 @@ Máy phát triển không có GPU backend nào (`accel.available_backends()` tr�
 | `cpu` | Windows 11 (10.0.26200), Python 3.13.14 | torch 2.14.1+cpu, onnxruntime 1.31.0, ultralytics 8.4.189, rembg 2.0.86 | đã đo thật |
 | `cuda` | chưa kiểm thử | chưa kiểm thử | chưa kiểm thử |
 | `mps` | chưa kiểm thử | chưa kiểm thử | chưa kiểm thử |
-| `openvino` | chưa kiểm thử | chưa kiểm thử (máy đo chưa cài gói `openvino`) | chưa kiểm thử |
+| `openvino` | Windows 11 + Docker Desktop (WSL2), GPU `Intel(R) Graphics [0x7d55]` | container `openvino/ubuntu24_runtime:2026.4.1`, Python 3.12.3, OpenVINO 2026.4.1 | chạy thật trong Docker, chưa đo |
 
 ### Cài đặt theo backend
 
