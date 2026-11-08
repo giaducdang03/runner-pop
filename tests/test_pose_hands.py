@@ -65,3 +65,52 @@ def test_held_disabled_has_no_pose_stage(monkeypatch):
     monkeypatch.setattr(C, "HELD_ENABLE", False)
     scene = _scene_with_fakes(monkeypatch)
     assert all(s.key != "pose" for s in scene.trace.stages)
+
+
+def test_attach_hands_keeps_higher_iou_pose():
+    a = Person(idx=0, box=(0, 0, 100, 300), conf=0.9)
+    boxes = np.array([[10, 0, 110, 300], [0, 0, 100, 300]], np.float32)   # IoU ~0.82 rồi 1.0
+    kps = np.stack([_kp((50, 100), (50, 200)), _kp((70, 100), (70, 200))])
+    pose.attach_hands([a], boxes, kps)
+    assert np.allclose(a.hands, [(70, 235)])
+    pose.attach_hands([a], boxes[::-1], kps[::-1])        # đảo thứ tự: vẫn giữ pose IoU cao
+    assert np.allclose(a.hands, [(70, 235)])
+
+
+def test_attach_hands_tie_keeps_first():
+    a = Person(idx=0, box=(0, 0, 100, 300), conf=0.9)
+    boxes = np.array([[0, 0, 100, 300], [0, 0, 100, 300]], np.float32)
+    kps = np.stack([_kp((50, 100), (50, 200)), _kp((70, 100), (70, 200))])
+    pose.attach_hands([a], boxes, kps)
+    assert np.allclose(a.hands, [(50, 235)])
+
+
+def test_detect_hands_falls_back_to_cpu(monkeypatch):
+    from tests.test_detect_device import device_for, FakeModel, _Res
+    from backend.pipeline import accel
+
+    class _PoseRes(_Res):
+        def __init__(self):
+            super().__init__()
+            self.boxes.xyxy.a = np.array([[5, 5, 30, 35]], np.float32)
+            kp = _kp((15, 10), (15, 20))[None]
+            self.keypoints = type("K", (), {"data": type("D", (), {"cpu": lambda s: s,
+                                                                    "numpy": lambda s: kp})()})()
+
+    class _CpuModel:
+        def predict(self, img, **kw):
+            return [_PoseRes()]
+
+    seen = []
+
+    def fake_get(w=None, device=None):
+        seen.append(device.kind if device else None)
+        if device is not None and device.kind != "cpu":
+            raise RuntimeError("IR không dùng được")
+        return _CpuModel()
+
+    monkeypatch.setattr(pose, "get_yolo", fake_get)
+    p = Person(idx=0, box=(5, 5, 30, 35), conf=0.9)
+    err = pose.detect_hands(np.zeros((40, 60, 3), np.uint8), [p], device_for("openvino"))
+    assert err is None and len(p.hands) == 1
+    assert seen == ["gpu", "cpu"]

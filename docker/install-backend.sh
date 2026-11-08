@@ -20,3 +20,4 @@ python -c "import cv2, torch, onnxruntime, pymatting, rembg, rapidocr_onnxruntim
 
 # Tải sẵn trọng số YOLO vào /app để container không cần mạng cho bước detect.
 python -c "from ultralytics import YOLO; YOLO('yolov8s-seg.pt')"
+python -c "from ultralytics import YOLO; YOLO('yolov8s-pose.pt')"

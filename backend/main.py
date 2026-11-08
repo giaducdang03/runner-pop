@@ -436,7 +436,7 @@ def process(
                                   P.SegParams(band_frac=band, focus_frac=focus,
                                               cache=s.cache, device_mode=device), trace=job.trace)
         with job.trace.stage("bib", "Xác định số BIB", note="OCR vùng thân của người được chọn") as st_bib:
-            bib = P.read_bib(s.scene.rgb, chosen.box, chosen.mask)
+            bib = P.read_bib(s.scene.rgb, chosen.body_box or chosen.box, chosen.mask)
             st_bib.note = f"BIB = {bib}" if bib else "không đọc được số BIB"
         s.meta = {"method": method, "band": band, "focus": focus, "person": chosen.idx, "bib": bib}
         return ProcessOut(

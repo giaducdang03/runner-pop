@@ -261,18 +261,22 @@ def detect_scene(rgb: np.ndarray, preprocess: str = "auto",
         if persons:
             break
 
+    pose_err: Optional[str] = None
     if persons and C.HELD_ENABLE:
         from .pose import detect_hands      # nhập lười: pose.py nhập lại get_yolo từ module này
         with trace.stage("pose", "YOLO-pose: vị trí nắm tay") as s:
-            err = detect_hands(det_img, persons, device)
-            n_hands = sum(len(p.hands) for p in persons)
-            s.note = f"lỗi, bỏ qua vật cầm tay: {err}" if err else f"{n_hands} tay"
-            vis = det_img.copy()
-            r = max(4, vis.shape[1] // 200)
-            for p in persons:
-                for hx, hy in p.hands:
-                    cv2.circle(vis, (int(round(hx)), int(round(hy))), r, (255, 0, 0), -1)
-            s.show(vis)
+            try:
+                pose_err = detect_hands(det_img, persons, device)
+                n_hands = sum(len(p.hands) for p in persons)
+                s.note = f"lỗi, bỏ qua vật cầm tay: {pose_err}" if pose_err else f"{n_hands} tay"
+                vis = det_img.copy()
+                r = max(4, vis.shape[1] // 200)
+                for p in persons:
+                    for hx, hy in p.hands:
+                        cv2.circle(vis, (int(round(hx)), int(round(hy))), r, (255, 0, 0), -1)
+                s.show(vis)
+            except Exception as e:      # vẽ trace lỗi cũng không được làm hỏng request
+                log.warning("pose: %s", e)
 
     if persons and C.HELD_ENABLE:
         from .held import merge_pole
@@ -280,17 +284,22 @@ def detect_scene(rgb: np.ndarray, preprocess: str = "auto",
         with trace.stage("held", "Đồ vật cầm tay (gậy, …)") as s:
             n_poles = n_objs = 0
             try:
-                for pole in find_poles(rgb, persons):
-                    merge_pole(persons[pole.owner], pole, rgb.shape)
-                    n_poles += 1
-                n_objs = attach_objects(persons, objects)
-                s.note = f"{n_poles} gậy, {n_objs} vật"
+                if pose_err:
+                    # pose lỗi: không có tay để làm mốc -> giữ nguyên người như trước khi có tính năng này
+                    s.note = "pose lỗi, không gộp vật cầm tay"
+                else:
+                    if C.POLE_ENABLE:
+                        for pole in find_poles(rgb, persons):
+                            merge_pole(persons[pole.owner], pole, rgb.shape)
+                            n_poles += 1
+                    n_objs = attach_objects(persons, objects)
+                    s.note = f"{n_poles} gậy, {n_objs} vật" + ("" if C.POLE_ENABLE else " (tắt dò gậy)")
+                if n_poles or n_objs:
+                    best = persons[0] if len(persons) == 1 else max(persons, key=lambda q: len(q.held))
+                    s.overlay(rgb, best.mask if best.mask is not None else box_to_mask(best.box, rgb.shape))
             except Exception as e:      # không để lỗi gộp vật cầm tay làm hỏng request
                 log.warning("held: %s", e)
                 s.note = f"lỗi, bỏ qua vật cầm tay: {e}"
-            if n_poles or n_objs:
-                best = persons[0] if len(persons) == 1 else max(persons, key=lambda q: len(q.held))
-                s.overlay(rgb, best.mask if best.mask is not None else box_to_mask(best.box, rgb.shape))
 
     suggested = suggest_person(Scene(rgb=rgb, persons=persons, quality=qd)) if persons else 0
     if persons:

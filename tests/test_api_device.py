@@ -218,3 +218,18 @@ def test_ui_helpers_device_line_and_default_engine():
     assert ui_helpers.pick_default_engine({"default_engine": "rvm"}, ["cf", "rvm"]) == "rvm"
     assert ui_helpers.pick_default_engine({}, ["cf", "rvm"]) == "cf"
     assert ui_helpers.pick_default_engine({"default_engine": "zzz"}, ["cf"]) == "cf"
+
+
+def test_bib_reads_body_box_not_merged_box(client, monkeypatch):
+    # box gộp gậy làm lệch dải thân: OCR BIB phải đọc theo body_box
+    rgb = np.zeros((100, 100, 3), np.uint8)
+    person = Person(idx=0, box=(10, 0, 95, 90), conf=0.9, mask=None, body_box=(10, 10, 80, 90))
+    main._put("sid-bib", main.Session(rgb=rgb, scene=Scene(rgb=rgb, persons=[person])))
+    seen = []
+    cut = P.Cutout(image=rgb, alpha=rgb[..., 0], foreground=rgb, background=rgb,
+                   trimap=np.zeros((100, 100), np.uint8))
+    monkeypatch.setattr(P, "build_cutout", lambda *a, **k: cut)
+    monkeypatch.setattr(P, "read_bib", lambda rgb, box, mask=None: seen.append(tuple(box)) or "")
+    r = client.post("/process/sid-bib?method=cf")
+    assert r.status_code == 200, r.text
+    assert seen == [(10, 10, 80, 90)]

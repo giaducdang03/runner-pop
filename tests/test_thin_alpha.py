@@ -79,9 +79,11 @@ def test_overlay_respects_other_person_exclusion(body_only_birefnet):
 def test_no_poles_cutout_unchanged(body_only_birefnet):
     scene = _scene(with_pole=False)
     before = build_cutout(scene, scene.persons[0], "birefnet")
+    snap_alpha, snap_fg = before.alpha.copy(), before.foreground.copy()
     from backend.pipeline import thin
     after = thin.overlay_poles(before, scene, scene.persons[0], None)
-    assert after is before or np.array_equal(after.alpha, before.alpha)
+    assert np.array_equal(after.alpha, snap_alpha)
+    assert np.array_equal(after.foreground, snap_fg)
     assert not any(s["key"] == "thin" for s in before.trace.to_list())
 
 

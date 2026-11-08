@@ -160,6 +160,7 @@ Ngoài người, YOLO-seg còn phát hiện vật COCO (chai, điện thoại, t
 vật nằm gần nắm tay (và gậy dò được từ nắm tay) được gộp vào mask người nên không bị làm xám cùng nền.
 
 - `HELD_ENABLE` (mặc định `1`): đặt `0` để tắt hẳn (không chạy pose, YOLO chỉ tìm người, kết quả như trước).
+- `POLE_ENABLE` (mặc định `1`): đặt `0` để chỉ tắt dò gậy; vật COCO vẫn được gộp (`HELD_ENABLE` là công tắc chung).
 - `HELD_CLASSES`: danh sách id lớp COCO coi là vật cầm tay, cách nhau bởi dấu phẩy (mặc định gồm túi, chai, cốc, điện thoại, ...; xem `config.py`).
 - `POSE_WEIGHTS` (mặc định `yolov8s-pose.pt`): trọng số YOLO-pose; tải tự động lần đầu.
 - Ngưỡng tinh chỉnh (`HELD_MIN_CONF`, `HELD_HAND_DIST`, `HELD_TOUCH_FRAC`, `HELD_MAX_AREA`) nằm trong `backend/pipeline/config.py`.

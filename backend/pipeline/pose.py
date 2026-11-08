@@ -39,32 +39,49 @@ def _iou(a, b) -> float:
 
 
 def attach_hands(persons: List[Person], pose_boxes: np.ndarray, pose_kps: np.ndarray) -> None:
-    """Ghép mỗi pose với người có IoU box lớn nhất (>= 0.5) rồi điền person.hands."""
+    """Ghép mỗi pose với người có IoU box lớn nhất (>= 0.5) rồi điền person.hands.
+    Hai pose cùng khớp một người: giữ pose có IoU cao hơn (bằng nhau thì giữ pose đầu)."""
+    taken: dict = {}        # id(person) -> IoU của pose đang giữ
     for box, kp in zip(pose_boxes, pose_kps):
         best, best_iou = None, _MATCH_IOU
         for p in persons:
             v = _iou(box, p.box)
             if v >= best_iou:
                 best, best_iou = p, v
-        if best is not None:
-            best.hands = hand_points(kp)
+        if best is None or best_iou <= taken.get(id(best), -1.0):
+            continue
+        taken[id(best)] = best_iou
+        best.hands = hand_points(kp)
+
+
+def _predict_hands(rgb: np.ndarray, persons: List[Person], device: Optional[accel.Device]) -> None:
+    kw = predict_kwargs(device) if device is not None else {}
+    if not kw.get("half"):
+        kw.pop("half", None)
+    res = get_yolo(C.POSE_WEIGHTS, device).predict(
+        rgb, imgsz=C.POSE_IMGSZ, conf=0.25, verbose=False, **kw)[0]
+    if res.boxes is None or len(res.boxes) == 0 or res.keypoints is None:
+        return
+    boxes = res.boxes.xyxy.cpu().numpy()
+    kps = res.keypoints.data.cpu().numpy()
+    attach_hands(persons, boxes, kps)
 
 
 def detect_hands(rgb: np.ndarray, persons: List[Person],
                  device: Optional[accel.Device] = None) -> Optional[str]:
-    """Chạy YOLO-pose rồi điền hands cho từng người. Không bao giờ raise: lỗi bất kỳ thì log,
-    để hands rỗng và trả chuỗi lỗi (thành công trả None) để stage ghi vào trace."""
+    """Chạy YOLO-pose rồi điền hands cho từng người. Không bao giờ raise: thiết bị GPU/openvino
+    lỗi (kể cả IR không dùng được) thì thử lại một lần trên CPU; CPU cũng lỗi thì log, để hands rỗng
+    và trả chuỗi lỗi (thành công trả None) để stage ghi vào trace."""
     try:
-        kw = predict_kwargs(device) if device is not None else {}
-        if not kw.get("half"):
-            kw.pop("half", None)
-        res = get_yolo(C.POSE_WEIGHTS, device).predict(
-            rgb, imgsz=C.POSE_IMGSZ, conf=0.25, verbose=False, **kw)[0]
-        if res.boxes is None or len(res.boxes) == 0 or res.keypoints is None:
-            return None
-        boxes = res.boxes.xyxy.cpu().numpy()
-        kps = res.keypoints.data.cpu().numpy()
-        attach_hands(persons, boxes, kps)
+        try:
+            _predict_hands(rgb, persons, device)
+        except Exception as e:  # noqa: BLE001
+            if device is None or device.kind == "cpu":
+                raise
+            log.warning("YOLO-pose trên %s lỗi, thử lại bằng CPU: %s", device.backend, e)
+            for p in persons:
+                p.hands = []
+            _predict_hands(rgb, persons, accel.resolve("cpu"))
         return None
     except Exception as e:  # noqa: BLE001
         log.warning("YOLO-pose thất bại, bỏ qua vật cầm tay: %s", e)

@@ -29,7 +29,7 @@ def test_detect_scene_without_hands_unchanged(monkeypatch):
     assert (p.mask is None) == (base.mask is None)
     if p.mask is not None:
         assert np.array_equal(p.mask, base.mask)
-    assert next(s for s in scene.trace.stages if s.key == "held").note == "0 gậy, 0 vật"
+    assert "pose lỗi" in next(s for s in scene.trace.stages if s.key == "held").note
 
 
 # --- vật COCO gần nắm tay -------------------------------------------------------
@@ -121,3 +121,42 @@ def test_detect_scene_merges_object_near_hand(monkeypatch):
     scene = detect.detect_scene(np.zeros((40, 60, 3), np.uint8), preprocess="none", trace=Trace())
     assert scene.persons[0].held == ["bottle"]
     assert next(s for s in scene.trace.stages if s.key == "held").note.startswith("0 gậy, 1 vật")
+
+
+def _fake_touching_object(monkeypatch):
+    from backend.pipeline import detect
+    obj = held.HeldObject(39, "bottle", (28, 10, 40, 20), 0.9, None)   # chạm mép phải mask người
+    monkeypatch.setattr(detect, "_objects_from_result", lambda res, img: [obj])
+
+
+def test_pose_failure_does_not_merge_touching_object(monkeypatch):
+    # pose lỗi (get_yolo của pose ném) -> chạy như cũ: không gộp dù vật chạm mask người
+    monkeypatch.setattr(C, "HELD_ENABLE", False)
+    _fake_touching_object(monkeypatch)
+    base = _scene_with_fakes(monkeypatch).persons[0]
+    monkeypatch.setattr(C, "HELD_ENABLE", True)
+    scene = _scene_with_fakes(monkeypatch)
+    p = scene.persons[0]
+    assert p.box == base.box and p.held == [] and p.body_box is None
+    assert np.array_equal(p.mask, base.mask)
+    note = next(s for s in scene.trace.stages if s.key == "held").note
+    assert "pose lỗi" in note
+
+
+def test_pole_disabled_skips_find_poles_but_merges_objects(monkeypatch):
+    from backend.pipeline import detect, pose, poles
+    from backend.pipeline.trace import Trace
+    from tests.test_detect_device import FakeModel
+    monkeypatch.setattr(C, "HELD_ENABLE", True)
+    monkeypatch.setattr(C, "POLE_ENABLE", False)
+    monkeypatch.setattr(pose, "detect_hands",
+                        lambda img, persons, dev: persons[0].hands.append((28.0, 20.0)))
+    calls = []
+    monkeypatch.setattr(poles, "find_poles", lambda *a, **k: calls.append(1) or [])
+    monkeypatch.setattr(detect, "get_yolo", lambda w=None, device=None: FakeModel("m"))
+    fake_obj = held.HeldObject(39, "bottle", (30, 15, 34, 25), 0.9, np.zeros((40, 60), np.uint8))
+    monkeypatch.setattr(detect, "_objects_from_result", lambda res, img: [fake_obj])
+    scene = detect.detect_scene(np.zeros((40, 60, 3), np.uint8), preprocess="none", trace=Trace())
+    p = scene.persons[0]
+    assert calls == [] and p.poles == [] and p.held == ["bottle"]
+    assert "tắt dò gậy" in next(s for s in scene.trace.stages if s.key == "held").note

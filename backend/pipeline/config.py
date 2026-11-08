@@ -67,6 +67,7 @@ BIREFNET_INPUT_NAME = os.environ.get("BIREFNET_INPUT_NAME", "input_image")
 
 # --- đồ vật cầm trên tay ------------------------------------------------------
 HELD_ENABLE = os.environ.get("HELD_ENABLE", "1") != "0"
+POLE_ENABLE = os.environ.get("POLE_ENABLE", "1") != "0"   # 0 = không dò gậy (vật COCO vẫn gộp)
 POSE_WEIGHTS = os.environ.get("POSE_WEIGHTS", "yolov8s-pose.pt")
 POSE_IMGSZ = 960
 HAND_MIN_CONF = 0.3
