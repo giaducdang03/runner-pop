@@ -37,25 +37,25 @@
 
 **Files:** `Dockerfile`, `docker/install-backend.sh`, `.dockerignore` (allowlist: `backend/ frontend/ docker/ requirements.txt`), `.gitattributes` (`*.sh`, `Dockerfile` → LF).
 
-- [ ] Build `cpu` + `frontend`: `docker compose build` → smoke import in ra `torch 2.14.1+cpu`.
-- [ ] Build `intel`: `docker compose -f docker-compose.yml -f docker-compose.intel.yml build backend`.
-- [ ] Build `cuda`: `docker compose -f docker-compose.yml -f docker-compose.cuda.yml build backend` (chỉ build).
-- [ ] Commit.
+- [x] Build `cpu` + `frontend`: `docker compose build` → smoke import in ra `torch 2.14.1+cpu`.
+- [x] Build `intel`: `docker compose -f docker-compose.yml -f docker-compose.intel.yml build backend`.
+- [ ] Build `cuda`: `docker compose -f docker-compose.yml -f docker-compose.cuda.yml build backend` — bỏ qua trên máy dev (không có NVIDIA, image >10 GB); chỉ `config --quiet`.
+- [x] Commit.
 
 ### Task 3: Compose files
 
 **Files:** `docker-compose.yml`, `docker-compose.intel.yml`, `docker-compose.cuda.yml`, `.gitignore` (+ `docker-data/`).
 
-- [ ] `docker compose config --quiet` cho cả 3 tổ hợp.
-- [ ] `docker compose up -d` → `backend` healthy, `http://localhost:8501` mở được; sau warm-up có `docker-data/cache/rembg/**/*.onnx` trên host.
-- [ ] Commit.
+- [x] `docker compose config --quiet` cho cả 3 tổ hợp.
+- [x] `docker compose up -d` → `backend` healthy, `http://localhost:8501` mở được; sau warm-up có `docker-data/cache/rembg/**/*.onnx` trên host.
+- [x] Commit.
 
 ### Task 4: Kiểm tra chạy thật + README
 
-- [ ] CPU: tải ảnh → xử lý → viewer → tải PNG + PDF.
-- [ ] Intel: `up` với override → `/health` báo backend openvino/GPU; xử lý 1 ảnh, trace các bước YOLO/BiRefNet ở `GPU` không có ghi chú "đã dùng CPU"; `pytest` trong container intel pass (mount `tests/`, `pytest.ini`).
-- [ ] README: mục *Chạy bằng Docker* (3 lệnh, cache trên host, biến tuỳ chỉnh, ghi chú WSL2 vs Linux, `MSYS_NO_PATHCONV=1` khi dùng `docker run` trong Git Bash). Cập nhật bảng trạng thái kiểm thử `openvino` nếu bước trên đạt.
-- [ ] Commit.
+- [x] CPU: tải ảnh → xử lý → viewer → tải PNG + PDF.
+- [x] Intel: `up` với override → `/health` báo backend openvino/GPU; xử lý 1 ảnh, trace các bước YOLO/BiRefNet ở `GPU` không có ghi chú "đã dùng CPU"; `pytest` trong container intel pass (mount `tests/`, `pytest.ini`).
+- [x] README: mục *Chạy bằng Docker* (3 lệnh, cache trên host, biến tuỳ chỉnh, ghi chú WSL2 vs Linux, `MSYS_NO_PATHCONV=1` khi dùng `docker run` trong Git Bash). Cập nhật bảng trạng thái kiểm thử `openvino` nếu bước trên đạt.
+- [x] Commit.
 
 ## Ngoài phạm vi
 
