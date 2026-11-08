@@ -53,6 +53,7 @@ class Scene:
     suggested: int = 0                                   # người được tự chọn (chế độ auto)
     trace: Trace = field(default_factory=Trace, repr=False)  # các bước đã chạy, để demo
     device: Dict[str, Any] = field(default_factory=dict)  # thiết bị chạy YOLO (Device.to_dict())
+    pole_candidates: Dict[int, List["Pole"]] = field(default_factory=dict)  # idx người -> gậy ứng viên (chưa gộp)
 
     def others(self, person: Person) -> List[Person]:
         return [p for p in self.persons if p is not person]

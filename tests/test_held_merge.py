@@ -113,6 +113,7 @@ def test_detect_scene_merges_object_near_hand(monkeypatch):
     from backend.pipeline.trace import Trace
     from tests.test_detect_device import FakeModel
     monkeypatch.setattr(C, "HELD_ENABLE", True)
+    monkeypatch.setattr(C, "POLE_ENABLE", False)
     monkeypatch.setattr(pose, "detect_hands",
                         lambda img, persons, dev: persons[0].hands.append((28.0, 20.0)))
     monkeypatch.setattr(detect, "get_yolo", lambda w=None, device=None: FakeModel("m"))
@@ -158,5 +159,5 @@ def test_pole_disabled_skips_find_poles_but_merges_objects(monkeypatch):
     monkeypatch.setattr(detect, "_objects_from_result", lambda res, img: [fake_obj])
     scene = detect.detect_scene(np.zeros((40, 60, 3), np.uint8), preprocess="none", trace=Trace())
     p = scene.persons[0]
-    assert calls == [] and p.poles == [] and p.held == ["bottle"]
+    assert calls == [] and p.poles == [] and p.held == ["bottle"] and scene.pole_candidates == {}
     assert "tắt dò gậy" in next(s for s in scene.trace.stages if s.key == "held").note

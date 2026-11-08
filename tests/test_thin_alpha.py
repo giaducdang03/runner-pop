@@ -102,9 +102,10 @@ DATA = Path(__file__).parent / "data" / "photo_5394198.jpg"
 
 
 @pytest.mark.real
-def test_real_image_main_runner_poles_keep_alpha():
+def test_real_image_main_runner_poles_keep_alpha(monkeypatch):
     from backend.pipeline import config as C
     from backend.pipeline.detect import detect_scene, get_yolo
+    monkeypatch.setattr(C, "POLE_ENABLE", True)
     try:
         get_yolo(C.POSE_WEIGHTS)
         get_yolo(C.YOLO_WEIGHTS)
@@ -122,8 +123,9 @@ def test_real_image_main_runner_poles_keep_alpha():
         return inter / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter)
 
     main = max(scene.persons, key=lambda p: iou(p.box, (1225, 5, 2345, 1703)))
+    assert scene.pole_candidates.get(main.idx), "người chạy chính phải có gậy ứng viên"
+    c = build_cutout(scene, main, "cf")     # gộp gậy của main trước khi chạy engine
     assert main.poles, "người chạy chính phải có gậy"
-    c = build_cutout(scene, main, "cf")
     # mask người đã gộp gậy: bỏ dải gậy (nở 6 px) để còn lại thân người
     body = (main.mask > 127).astype(np.uint8)
     for pl in main.poles:

@@ -146,9 +146,10 @@ def _seg_dist(p, a, b):
 
 
 @pytest.mark.real
-def test_real_image_poles():
+def test_real_image_poles(monkeypatch):
     from backend.pipeline import config as C
     from backend.pipeline.detect import detect_scene, get_yolo
+    monkeypatch.setattr(C, "POLE_ENABLE", True)
     try:
         get_yolo(C.POSE_WEIGHTS)
         get_yolo(C.YOLO_WEIGHTS)
@@ -160,8 +161,8 @@ def test_real_image_poles():
     bgr = cv2.resize(bgr, (round(w * s), round(h * s)), interpolation=cv2.INTER_AREA)
     rgb = np.ascontiguousarray(bgr[..., ::-1])
     scene = detect_scene(rgb)
-    # detect_scene đã gộp gậy vào mask (đổi _grip_ratio) nên không gọi lại find_poles
-    found = [pl for p in scene.persons for pl in p.poles]
+    # detect_scene chỉ lưu gậy ứng viên (chưa gộp) vào scene.pole_candidates
+    found = [pl for pls in scene.pole_candidates.values() for pl in pls]
 
     main = max(scene.persons, key=lambda p: _iou(p.box, (1225, 5, 2345, 1703)))
     assert _iou(main.box, (1225, 5, 2345, 1703)) >= 0.7

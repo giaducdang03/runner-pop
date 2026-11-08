@@ -34,6 +34,19 @@ def merge_pole(person: Person, pole: Pole, shape) -> None:
     person.poles.append(pole)
 
 
+def apply_poles(scene, person: Person, shape) -> int:
+    """Gộp gậy ứng viên của đúng `person` (nếu thuộc scene.persons); idempotent: đã gộp (person.poles)
+    thì không gộp lại. Trả về số gậy vừa gộp."""
+    if not any(p is person for p in scene.persons) or person.poles:
+        return 0
+    cands = scene.pole_candidates.get(person.idx)
+    if not cands:
+        return 0
+    for pole in cands:
+        merge_pole(person, pole, shape)
+    return len(cands)
+
+
 @dataclass
 class HeldObject:
     """Vật COCO do YOLO-seg phát hiện (ứng viên cầm tay)."""

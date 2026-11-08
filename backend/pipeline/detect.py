@@ -278,8 +278,8 @@ def detect_scene(rgb: np.ndarray, preprocess: str = "auto",
             except Exception as e:      # vẽ trace lỗi cũng không được làm hỏng request
                 log.warning("pose: %s", e)
 
+    pole_cands: dict = {}
     if persons and C.HELD_ENABLE:
-        from .held import merge_pole
         from .poles import find_poles
         with trace.stage("held", "Đồ vật cầm tay (gậy, …)") as s:
             n_poles = n_objs = 0
@@ -289,12 +289,14 @@ def detect_scene(rgb: np.ndarray, preprocess: str = "auto",
                     s.note = "pose lỗi, không gộp vật cầm tay"
                 else:
                     if C.POLE_ENABLE:
+                        # chỉ dò; gộp lúc xử lý người được chọn (held.apply_poles trong build_cutout)
                         for pole in find_poles(rgb, persons):
-                            merge_pole(persons[pole.owner], pole, rgb.shape)
+                            pole_cands.setdefault(persons[pole.owner].idx, []).append(pole)
                             n_poles += 1
                     n_objs = attach_objects(persons, objects)
-                    s.note = f"{n_poles} gậy, {n_objs} vật" + ("" if C.POLE_ENABLE else " (tắt dò gậy)")
-                if n_poles or n_objs:
+                    s.note = (f"{n_poles} gậy ứng viên (gộp khi xử lý người được chọn), {n_objs} vật"
+                              if C.POLE_ENABLE else f"{n_poles} gậy, {n_objs} vật (tắt dò gậy)")
+                if n_objs:
                     best = persons[0] if len(persons) == 1 else max(persons, key=lambda q: len(q.held))
                     s.overlay(rgb, best.mask if best.mask is not None else box_to_mask(best.box, rgb.shape))
             except Exception as e:      # không để lỗi gộp vật cầm tay làm hỏng request
@@ -310,4 +312,4 @@ def detect_scene(rgb: np.ndarray, preprocess: str = "auto",
 
     return Scene(rgb=rgb, persons=persons, det_rgb=det_img, quality=quality.to_dict(),
                  preprocess=names, attempt=attempt, suggested=suggested, trace=trace,
-                 device=device.to_dict())
+                 device=device.to_dict(), pole_candidates=pole_cands)
