@@ -13,6 +13,7 @@ import numpy as np
 from . import config as C
 from .matting import matte
 from .occlusion import exclusion_mask
+from .polemask import PoleMask, refine_pole_mask
 from .poles import Pole
 from .schema import Cutout, Person, Scene
 from .trace import Trace
@@ -55,6 +56,23 @@ def _trimap(pole: Pole, box) -> np.ndarray:
     return tri
 
 
+def _refined_trimap(pole: Pole, box, pm: PoleMask) -> np.ndarray:
+    """Trimap từ mask gậy mở rộng: fg = lõi dải gậy ∪ mask co 1 px, unknown = dải THIN_BAND_PX quanh
+    mask (và quanh dải gậy như trimap cũ), còn lại là nền. `box` phải chứa pm.box."""
+    tri = _trimap(pole, box)
+    x1, y1, x2, y2 = box
+    m = np.zeros((y2 - y1, x2 - x1), np.uint8)
+    bx1, by1, bx2, by2 = pm.box
+    m[by1 - y1:by2 - y1, bx1 - x1:bx2 - x1] = pm.mask
+    k = np.ones((3, 3), np.uint8)
+    fg = (cv2.erode(m, k) > 0) | (tri == 255)
+    unk = (cv2.dilate(m, k, iterations=C.THIN_BAND_PX) > 0) | (tri == 128)
+    out = np.zeros_like(tri)
+    out[unk] = 128
+    out[fg] = 255
+    return out
+
+
 def overlay_poles(cutout: Cutout, scene: Scene, person: Person,
                   trace: Optional[Trace] = None) -> Cutout:
     """Phủ alpha gậy (matting ở ảnh đầy đủ) lên cutout; person không có gậy thì trả nguyên cutout.
@@ -74,17 +92,33 @@ def overlay_poles(cutout: Cutout, scene: Scene, person: Person,
                 cv2.fillConvexPoly(own, np.round(pole.polygon()).astype(np.int32), 255)
             excl = exclusion_mask(scene, person, own)
             alpha = cutout.alpha.copy()
+            # pixel chắc là người (mask thân) hoặc người khác: không tính là gậy khi mở rộng mask
+            known = excl | (person.mask > 127) if person.mask is not None else excl
+            n_ref = 0
             for pole in person.poles:
                 box = _crop_box(pole, alpha.shape)
                 if box is None:
                     continue
+                pm = (refine_pole_mask(cutout.image, pole, person.body_h, known, person.hands)
+                      if C.POLE_REFINE else None)
+                if pm is not None:
+                    pad = C.THIN_BAND_PX + _PAD
+                    h, w = alpha.shape
+                    box = (max(0, min(box[0], pm.box[0] - pad)), max(0, min(box[1], pm.box[1] - pad)),
+                           min(w, max(box[2], pm.box[2] + pad)), min(h, max(box[3], pm.box[3] + pad)))
+                    tri = _refined_trimap(pole, box, pm)
+                    n_ref += 1
+                else:
+                    tri = _trimap(pole, box)
                 x1, y1, x2, y2 = box
-                a_pole = matte(cutout.image[y1:y2, x1:x2], _trimap(pole, box), "cf")
+                a_pole = matte(cutout.image[y1:y2, x1:x2], tri, "cf")
                 a_pole[excl[y1:y2, x1:x2]] = 0.0
                 alpha[y1:y2, x1:x2] = np.maximum(alpha[y1:y2, x1:x2], a_pole)
             up = alpha > cutout.alpha
             cutout.foreground[up] = cutout.image[up]
             cutout.alpha = alpha
+            if C.POLE_REFINE:
+                s.note = f"{len(person.poles)} gậy · mở rộng mask {n_ref}/{len(person.poles)}"
             s.show(alpha)
         except Exception as e:  # noqa: BLE001  (không bao giờ làm hỏng request)
             log.warning("alpha gậy thất bại, giữ cutout của engine: %s", e)

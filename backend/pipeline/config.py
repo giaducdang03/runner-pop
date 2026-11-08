@@ -109,6 +109,36 @@ POLE_LSD_CLAHE_TILE = (8, 8)
 POLE_LSD_MAX_SIDE = 1600             # ảnh lớn hơn được thu nhỏ về cạnh dài này trước khi chạy LSD (miền đã chọn ngưỡng)
 
 THIN_BAND_PX = 2            # px, vùng unknown quanh mép gậy khi matting alpha gậy ở ảnh đầy đủ
+# Mở rộng mask gậy (polemask.py): vùng khác nền cục bộ quanh dải gậy (gậy thứ hai song song, tay cầm, chóp)
+POLE_REFINE = os.environ.get("POLE_REFINE", "1") != "0"   # 0 = chỉ matting dải gậy dò được (như trước)
+POLE_REFINE_MAX_HW = 0.005           # dải gậy nửa bề rộng > 0.005 * h (gậy tre, gậy dày đã phủ đủ) thì không mở rộng
+POLE_REFINE_BAND = 0.04              # vùng tìm: cách trục <= 0.04 * h
+POLE_REFINE_RING = 0.015             # bề rộng vành lấy mẫu nền ngoài vùng tìm (* h, tối thiểu 6 px)
+POLE_REFINE_INPAINT_R = 5            # bán kính inpaint (Telea) khi ước lượng nền
+POLE_REFINE_DIFF = 22.0              # khoảng cách Lab (thang 8 bit của OpenCV) tối thiểu tới nền ước lượng
+POLE_REFINE_TEX_K = 1.0              # ngưỡng += K * gradient Lab cục bộ của nền (bờ, kết cấu nâng ngưỡng)
+# Phân vị 75 của gradient Lab ở vành lấy mẫu nền vượt mức này thì không mở rộng (nền gồ ghề: lá, cỏ gần,
+# đám đông). Trên 48 gậy thật/giả (19 ảnh): trời/tường/đường ~1-5, ruộng/cỏ xa ~8-11 (vẫn cải thiện),
+# bụi lá gần 14.8 làm tràn đốm lá; 12 giữ các ca cải thiện, bỏ ca tràn.
+POLE_REFINE_ROUGH_MAX = 12.0
+POLE_REFINE_MIN_H = 450              # người thấp hơn 450 px (ảnh làm việc): gậy ~1 px, vùng tìm toàn nền lộn xộn,
+                                     # không mở rộng (trên mẫu: chỉ thêm vài chục px, có ca nở theo gậy giả là lá cỏ)
+POLE_REFINE_WMUL = 3.0               # nửa bề rộng cục bộ tối đa = max(3 * half_w, 0.006 * h)
+POLE_REFINE_WMIN = 0.006
+POLE_REFINE_WEND = 2.0               # ở hai đầu gậy (tay cầm, quai, chóp): nửa bề rộng tối đa x 2.0
+POLE_REFINE_GAP = 3.0                # phần mới cách dải gậy tối đa max(3 * half_w, 2) px
+POLE_REFINE_MIN_LEN = 0.05           # phần thân mới (khớp đường thẳng, giữ pixel cách đường <= nửa bề rộng tối đa):
+                                     # phủ >= 0.05 * h dọc trục
+POLE_REFINE_ANGLE = 15.0             # và đường lệch hướng trục <= 15°
+POLE_REFINE_CONVERGE = 0.015         # và (nếu không phải mép gậy dò được) đường cắt trục gậy cách chỗ nắm
+                                     # <= max(2 * nửa bề rộng tối đa, 0.015 * h); không có tay gần trục thì bỏ
+                                     # và là một thanh: tương phản Lab với nền sát mép ngoài >= POLE_REFINE_DIFF,
+POLE_REFINE_THICK_PX = 3.0           # bề dày (trung vị theo cột) <= bề rộng dải gậy + 3 px
+POLE_REFINE_END_AREA = 3.0           # khối ở đầu gậy: diện tích <= 3 * (2 * nửa bề rộng tối đa ở đầu gậy)^2
+POLE_REFINE_END_TEX = 4.0            # gradient Lab nền ở đầu gậy > mức này (đất, cỏ; trời/tường ~1-2, núi xa ~5):
+                                     # khối ở đầu chỉ giữ phần sát trục (nửa bề rộng tối đa thường)
+POLE_REFINE_AREA = 4.0               # mask / dải gậy vượt mức này thì không mở rộng (nghi tràn)
+POLE_REFINE_AREA_H = 0.01            # phần thêm vượt 0.01 * h^2 px thì không mở rộng
 
 # Lớp COCO coi là vật cầm tay (YOLO-seg phát hiện cùng lúc với người); mặc định bỏ phương tiện, động vật, đồ nội thất lớn
 _HELD_DEFAULT = ("24,25,26,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,"
