@@ -80,3 +80,7 @@ POLE_BAR_CONTRAST = 0.05             # |Lab(tâm) − TB(Lab hai bên)| (Lab chi
 POLE_SIDE_RATIO = 0.7                # |Lab(trái) − Lab(phải)| < 0.7 * contrast (loại viền)
 POLE_GAP = 0.05                      # khoảng hụt tối đa (* h) khi dò đầu gậy
 POLE_GRIP_UP = 0.12                  # dò ngược lên trên nắm tay tối đa 0.12h (tay cầm)
+POLE_MIN_LEN = 0.2                   # gậy dò được (|tip − top|) ngắn hơn 0.2h thì bỏ
+POLE_HW_NARROW = 0.9                 # chọn bề rộng hẹp nhất có số mẫu đạt >= 0.9 × tốt nhất
+POLE_LAT_MIN_PX = 8.0                # khi dò đầu gậy được lệch ngang khỏi tia tối đa
+POLE_LAT_HW = 3.0                    # max(POLE_LAT_MIN_PX, POLE_LAT_HW * hw) px, ±1 px mỗi bước

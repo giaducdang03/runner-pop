@@ -27,8 +27,6 @@ _EXCLUDE_DEG = 3.0       # người thua bỏ các góc trong ±3° của gậy 
 _OWNER_DISK = 0.04       # bán kính đĩa xét mask quanh chỗ nắm (* h)
 _SAME_POLE_PAD = 6.0     # hai trục cách nhau < 2*hw + 6 px = cùng một gậy
 _BLUR_SIGMA = 1.2
-_LAT_MIN = 8.0           # px, khi dò đầu gậy được lệch ngang khỏi tia tối đa max(8, 3*hw)
-_LAT_HW = 3.0
 
 
 @dataclass
@@ -69,6 +67,7 @@ class _Scan:
     h: float
     angles: np.ndarray       # độ
     scores: np.ndarray       # điểm tốt nhất theo góc (-1 = không đủ mẫu)
+    spans: np.ndarray        # [r đầu, r cuối] của chuỗi liền được tính điểm, theo góc
     oxs: np.ndarray          # độ dịch tia tốt nhất theo góc
     hws: np.ndarray          # nửa bề rộng (px) có nhiều mẫu đạt nhất theo góc
     excluded: List[float]    # góc bị loại (độ), ±_EXCLUDE_DEG quanh mỗi góc
@@ -121,6 +120,20 @@ def _support(lab: _Lab, pts: np.ndarray, n: np.ndarray, hws_px: np.ndarray) -> n
     return np.stack(out)
 
 
+def _longest_chain(sup: np.ndarray, gap_n: float) -> Optional[Tuple[int, int, int]]:
+    """sup 1D (mẫu theo thứ tự dọc tia). Chuỗi có nhiều mẫu đạt nhất, hai mẫu đạt liên tiếp
+    cách nhau không quá gap_n bước (cùng quy tắc hụt như khi dò đầu gậy).
+    Trả (số mẫu đạt, chỉ số đầu, chỉ số cuối) hoặc None nếu không có mẫu nào."""
+    idx = np.flatnonzero(sup)
+    if len(idx) == 0:
+        return None
+    cut = np.flatnonzero(np.diff(idx) > gap_n)
+    starts = np.concatenate([[0], cut + 1])
+    ends = np.concatenate([cut, [len(idx) - 1]])
+    j = int(np.argmax(ends - starts))
+    return int(ends[j] - starts[j] + 1), int(idx[starts[j]]), int(idx[ends[j]])
+
+
 def _scan_hand(lab: _Lab, person: Person, hand) -> Optional[_Scan]:
     h = float(person.body_h)
     if h <= 0:
@@ -131,7 +144,9 @@ def _scan_hand(lab: _Lab, person: Person, hand) -> Optional[_Scan]:
     tol = C.POLE_HAND_TOL * h
     oxs = np.arange(-tol, tol + 1, _OX_STEP)
     rs = np.arange(C.POLE_SEARCH[0] * h, C.POLE_SEARCH[1] * h, _R_STEP)
+    gap_n = C.POLE_GAP * h / _R_STEP
     scores = np.full(len(angles), -1.0)
+    spans = np.zeros((len(angles), 2))          # đoạn [r đầu, r cuối] của chuỗi được tính điểm
     best_ox = np.zeros(len(angles))
     best_hw = np.full(len(angles), hws_px[0])
     for i, a in enumerate(angles):
@@ -141,79 +156,116 @@ def _scan_hand(lab: _Lab, person: Person, hand) -> Optional[_Scan]:
         ok = lab.inside(pts)
         cnt = ok.sum(axis=1)
         sup = _support(lab, pts, n, hws_px) & ok[None]                # HW x K x R
-        any_sup = sup.any(axis=0).sum(axis=1)
-        sc = np.where(cnt >= _MIN_SAMPLES, any_sup / np.maximum(cnt, 1), -1.0)
+        any_sup = sup.any(axis=0)
+        # điểm = số mẫu đạt của chuỗi liền dài nhất / số mẫu trong ảnh (mẫu rải rác không tính)
+        chains = [_longest_chain(any_sup[k], gap_n) if cnt[k] >= _MIN_SAMPLES else None
+                  for k in range(len(oxs))]
+        sc = np.array([-1.0 if c is None else c[0] / cnt[k] for k, c in enumerate(chains)])
         k = int(np.argmax(sc))
         if sc[k] < 0:
             continue
+        _, lo, hi = chains[k]
         scores[i] = sc[k]
+        spans[i] = (rs[lo], rs[hi])
         best_ox[i] = oxs[k]
-        best_hw[i] = hws_px[int(np.argmax(sup[:, k].sum(axis=1)))]
-    return _Scan(person, hand, h, angles, scores, best_ox, best_hw, [], [])
+        best_hw[i] = _narrowest(sup[:, k, lo:hi + 1].sum(axis=1), hws_px)
+    return _Scan(person, hand, h, angles, scores, spans, best_ox, best_hw, [], [])
 
 
 def _trace(lab: _Lab, o: np.ndarray, d: np.ndarray, n: np.ndarray, rs: np.ndarray,
-           hws_px: np.ndarray, gap: float, lat_max: float) -> Optional[np.ndarray]:
-    """Đi dọc o + r*d theo thứ tự rs, bám theo gậy (lệch ngang tối đa ±1 px mỗi bước, trong
-    ±lat_max). Trả điểm đạt cuối cùng trước khoảng hụt > gap hoặc trước mép ảnh (None nếu
-    không có mẫu nào đạt)."""
+           hws_px: np.ndarray, gap: float, lat_max: float,
+           span: Optional[Tuple[float, float]] = None) -> Optional[np.ndarray]:
+    """Đi dọc o + r*d theo thứ tự rs (dừng ở mép ảnh), bám theo gậy: lệch ngang tối đa ±1 px
+    mỗi bước, trong ±lat_max. Các mẫu đạt được chia thành chuỗi (hụt > gap thì đứt).
+    span None: lấy chuỗi bắt đầu ngay từ rs[0] (hụt tính cả từ rs[0]); có span: lấy chuỗi
+    nhiều mẫu nhất giao với đoạn span. Trả các điểm đạt (N x 2, theo thứ tự đi) của chuỗi đó,
+    điểm cuối là đầu gậy (None nếu không có)."""
     pts = o[None] + rs[:, None] * d[None]
     ok = lab.inside(pts)
     if not ok.all():
-        stop = int(np.argmin(ok))
-        rs = rs[:stop]
+        rs = rs[:int(np.argmin(ok))]
     if len(rs) == 0:
         return None
     lats = np.arange(-round(lat_max), round(lat_max) + 1, 1.0)
     grid = o[None, None] + rs[:, None, None] * d + lats[None, :, None] * n    # R x L x 2
     sup = _support(lab, grid, n, hws_px).any(axis=0) & lab.inside(grid)     # R x L
-    mid = len(lats) // 2
-    cur, last, last_r = mid, None, rs[0]
+    cur = len(lats) // 2
+    chains: List[List[Tuple[int, int]]] = []
+    last_r = rs[0]
     for i in range(len(rs)):
         lo, hi = max(0, cur - 1), min(len(lats), cur + 2)
         hit = np.flatnonzero(sup[i, lo:hi])
         if len(hit):
             cur = lo + int(hit[np.argmin(np.abs(lo + hit - cur))])
-            last, last_r = (i, cur), rs[i]
-        elif abs(rs[i] - last_r) > gap:
+            if not chains or abs(rs[i] - last_r) > gap:
+                chains.append([])
+            chains[-1].append((i, cur))
+            last_r = rs[i]
+        elif span is None and abs(rs[i] - last_r) > gap:
             break
-    if last is None:
+    chains = [c for c in chains if c]
+    if span is not None:
+        chains = [c for c in chains if rs[c[0][0]] <= span[1] and rs[c[-1][0]] >= span[0]]
+    if not chains:
         return None
-    return grid[last[0], last[1]]
+    best = max(chains, key=len) if span is not None else chains[0]
+    return np.array([grid[i, j] for i, j in best])
+
+
+def _narrowest(hits: np.ndarray, hws_px: np.ndarray) -> float:
+    """Bề rộng hẹp nhất có số mẫu đạt >= POLE_HW_NARROW x tốt nhất (dải rộng dễ đạt trên nền
+    nhiều vân nên không lấy thẳng argmax)."""
+    return float(hws_px[int(np.flatnonzero(hits >= C.POLE_HW_NARROW * hits.max())[0])])
+
+
+def _refine_hw(lab: _Lab, path: np.ndarray, n: np.ndarray, hws_px: np.ndarray) -> float:
+    """Ước lại nửa bề rộng dọc đường đã bám theo gậy, cho tâm lệch ngang ±_OX_STEP px (đường
+    bám có thể nằm lệch tâm gậy; gậy hai màu có vệt sáng thì dải hẹp chỉ đạt khi đặt đúng tâm)."""
+    lats = np.arange(-_OX_STEP, _OX_STEP + 0.5, 1.0)
+    grid = path[:, None] + lats[None, :, None] * n                       # N x L x 2
+    sup = _support(lab, grid, n, hws_px) & lab.inside(grid)[None]        # HW x N x L
+    return _narrowest(sup.any(axis=2).sum(axis=1), hws_px)
 
 
 def _candidate(lab: _Lab, scan: _Scan) -> Optional[_Cand]:
     """Góc tốt nhất (bỏ các góc bị loại) của một tay; ứng viên trùng một gậy tay này đã thua
     thì loại thêm ±3° quanh góc đó và tìm tiếp."""
     while True:
-        cand = _best(lab, scan)
-        if cand is None or not any(_same_pole(cand.pole, q) for q in scan.lost_to):
+        sc = scan.scores.copy()
+        for ex in scan.excluded:
+            sc[np.abs(scan.angles - ex) <= _EXCLUDE_DEG] = -1.0
+        i = int(np.argmax(sc))
+        if sc[i] < C.POLE_MIN_SCORE:
+            return None
+        cand = _build(lab, scan, i, float(sc[i]))
+        if cand is not None and not any(_same_pole(cand.pole, q) for q in scan.lost_to):
             return cand
-        scan.excluded.append(cand.angle)
+        scan.excluded.append(float(scan.angles[i]))   # gậy quá ngắn / trùng gậy đã thua
 
 
-def _best(lab: _Lab, scan: _Scan) -> Optional[_Cand]:
-    """Góc tốt nhất (bỏ các góc bị loại) của một tay; truy đầu gậy và đầu trên."""
-    sc = scan.scores.copy()
-    for ex in scan.excluded:
-        sc[np.abs(scan.angles - ex) <= _EXCLUDE_DEG] = -1.0
-    i = int(np.argmax(sc))
-    if sc[i] < C.POLE_MIN_SCORE:
-        return None
+def _build(lab: _Lab, scan: _Scan, i: int, score: float) -> Optional[_Cand]:
+    """Truy đầu gậy và đầu trên cho góc thứ i; None nếu không dò được đầu gậy hoặc gậy
+    ngắn hơn POLE_MIN_LEN * h."""
     a, h = float(scan.angles[i]), scan.h
     d, n = _dir(a)
     o = scan.hand + scan.oxs[i] * n
     hws_px = np.asarray(C.POLE_HALF_W, np.float64) * h
     gap = C.POLE_GAP * h
     diag = math.hypot(lab.w, lab.h)
-    lat = max(_LAT_MIN, _LAT_HW * float(scan.hws[i]))
-    tip = _trace(lab, o, d, n, np.arange(C.POLE_SEARCH[0] * h, diag, _R_STEP), hws_px, gap, lat)
-    top = _trace(lab, o, d, n, -np.arange(0.0, C.POLE_GRIP_UP * h + _R_STEP / 2, _R_STEP),
-                 hws_px, gap, lat)
-    tip = o + C.POLE_SEARCH[1] * h * d if tip is None else tip
-    top = o if top is None else top
+    lat = max(C.POLE_LAT_MIN_PX, C.POLE_LAT_HW * float(scan.hws[i]))
+    path = _trace(lab, o, d, n, np.arange(C.POLE_SEARCH[0] * h, diag, _R_STEP), hws_px, gap, lat,
+                 span=(float(scan.spans[i, 0]), float(scan.spans[i, 1])))
+    up = _trace(lab, o, d, n, -np.arange(0.0, C.POLE_GRIP_UP * h + _R_STEP / 2, _R_STEP),
+                hws_px, gap, lat)
+    if path is None:                      # không dò được đầu gậy = không có bằng chứng
+        return None
+    tip = path[-1]
+    top = o if up is None else up[-1]
+    hw = _refine_hw(lab, path, n, hws_px)
+    if float(np.linalg.norm(tip - top)) < C.POLE_MIN_LEN * h:
+        return None
     pole = Pole(top=(float(top[0]), float(top[1])), tip=(float(tip[0]), float(tip[1])),
-                half_w=float(scan.hws[i]), score=float(sc[i]), owner=scan.person.idx)
+                half_w=hw, score=score, owner=scan.person.idx)
     return _Cand(scan, a, pole)
 
 

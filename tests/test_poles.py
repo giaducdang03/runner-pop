@@ -79,6 +79,33 @@ def test_pole_owned_by_hand_whose_mask_wraps_grip():
     assert not any(pl.owner == b.idx for pl in found)
 
 
+def test_textured_background_is_not_a_pole():
+    """Nền nhiều vân (kiểu lá cây mờ) không được sinh gậy."""
+    rng = np.random.default_rng(0)
+    tex = rng.integers(40, 216, (H // 8, W // 8, 3), dtype=np.uint8)
+    rgb = cv2.resize(tex, (W, H), interpolation=cv2.INTER_NEAREST).astype(np.int16)
+    rgb = np.clip(rgb + rng.normal(0, 10, rgb.shape), 0, 255).astype(np.uint8)
+    rgb[100:500, 150:250] = (200, 60, 60)
+    assert poles.find_poles(rgb, [_person()]) == []
+
+
+def test_dashed_bar_is_not_a_continuous_pole():
+    """Thanh đứt quãng (khoảng hụt > POLE_GAP * h) không được tính là một gậy liền."""
+    rgb = _canvas()
+    for y in range(240, 600, 66):
+        cv2.line(rgb, (262 + (y - 240) * 38 // 320, y), (262 + (y + 36 - 240) * 38 // 320, y + 36),
+                 (20, 20, 20), 6)
+    assert poles.find_poles(rgb, [_person()]) == []
+
+
+def test_half_width_prefers_narrow_strip():
+    rgb = _canvas()
+    cv2.line(rgb, (262, 240), (300, 560), (20, 20, 20), 3)
+    found = poles.find_poles(rgb, [_person()])
+    assert len(found) == 1
+    assert found[0].half_w <= 0.005 * 400
+
+
 def test_people_without_hands_get_no_poles():
     rgb = _canvas()
     cv2.line(rgb, (262, 240), (300, 560), (20, 20, 20), 6)
@@ -141,6 +168,8 @@ def test_real_image_poles():
     angles = sorted(_pole_angle(pl) for pl in mine)
     assert len(mine) == 2, angles
     assert abs(angles[0] - 79) <= 4 and abs(angles[1] - 87.5) <= 4, angles
+    for pl in mine:                       # dải gậy không được rộng quá
+        assert pl.half_w <= 0.008 * main.body_h + 1e-6, pl
 
     p79 = next(pl for pl in mine if abs(_pole_angle(pl) - 79) <= 4)
     for pl in found:
@@ -153,3 +182,14 @@ def test_real_image_poles():
     assert _iou(red.box, (315, 187, 1071, 1526)) >= 0.6
     red_angles = [_pole_angle(pl) for pl in found if pl.owner == red.idx]
     assert any(abs(a - 75) <= 6 for a in red_angles), red_angles
+
+    # người áo trắng ở mép phải cầm gậy tre chĩa xuống - trái
+    white = max(scene.persons, key=lambda p: _iou(p.box, (2232, 28, 2560, 1661)))
+    assert _iou(white.box, (2232, 28, 2560, 1661)) >= 0.6
+    white_angles = [_pole_angle(pl) for pl in found if pl.owner == white.idx]
+    assert any(abs(a - 111) <= 6 for a in white_angles), white_angles
+
+    # số gậy có giới hạn; người nhỏ ở hậu cảnh (thấp hơn nửa người chạy chính) không có gậy
+    assert len(found) <= 6, found
+    small = {p.idx for p in scene.persons if p.body_h < 0.5 * main.body_h}
+    assert small and not any(pl.owner in small for pl in found), found
