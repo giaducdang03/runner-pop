@@ -85,6 +85,8 @@ POLE_HW_NARROW = 0.9                 # chọn bề rộng hẹp nhất có số 
 POLE_LAT_MIN_PX = 8.0                # khi dò đầu gậy được lệch ngang khỏi tia tối đa
 POLE_LAT_HW = 3.0                    # max(POLE_LAT_MIN_PX, POLE_LAT_HW * hw) px, ±1 px mỗi bước
 
+THIN_BAND_PX = 2            # px, vùng unknown quanh mép gậy khi matting alpha gậy ở ảnh đầy đủ
+
 # Lớp COCO coi là vật cầm tay (YOLO-seg phát hiện cùng lúc với người); mặc định bỏ phương tiện, động vật, đồ nội thất lớn
 _HELD_DEFAULT = ("24,25,26,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,"
                  "50,51,52,53,54,55,63,64,65,66,67,73,74,75,76,77,78,79")

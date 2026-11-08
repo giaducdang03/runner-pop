@@ -7,6 +7,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from ..compose import compose
+from ..thin import overlay_poles
 from ..schema import Cutout, Person, Scene, SegParams
 from ..trace import Trace
 from .base import ENGINES
@@ -19,6 +20,7 @@ def build_cutout(scene: Scene, person: Person, method: str = "cf",
     trace = trace if trace is not None else Trace()
     params = replace(params or SegParams(), trace=trace)
     cutout = ENGINES.get(method)(scene, person, params)
+    cutout = overlay_poles(cutout, scene, person, trace)   # gậy mảnh ở độ phân giải gốc, mọi engine
     with trace.stage("compose", "Ghép: người giữ màu + nền (xem trước, đen trắng)",
                      note="out = α·F + (1−α)·gray(B)") as s:
         s.show(compose(cutout, 1.0))
