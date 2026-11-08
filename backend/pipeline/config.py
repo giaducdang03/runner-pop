@@ -67,9 +67,10 @@ BIREFNET_INPUT_NAME = os.environ.get("BIREFNET_INPUT_NAME", "input_image")
 
 # --- đồ vật cầm trên tay ------------------------------------------------------
 HELD_ENABLE = os.environ.get("HELD_ENABLE", "1") != "0"
-# Dò gậy mặc định TẮT vì còn nhiều gậy giả (~46% trên mẫu gán nhãn); POLE_ENABLE=1 để bật.
-# Khi bật, gậy ứng viên chỉ được gộp cho người được xử lý (build_cutout); vật COCO không bị ảnh hưởng.
-POLE_ENABLE = os.environ.get("POLE_ENABLE", "0") == "1"
+# Dò gậy mặc định BẬT: bộ xác nhận LSD (POLE_LSD_MIN) loại gậy giả, trên mẫu gán nhãn giữ 41/44 gậy
+# thật và loại 44/49 gậy giả (trước khi lọc ~46% gậy dò được là giả). POLE_ENABLE=0 để tắt.
+# Gậy ứng viên chỉ được gộp cho người được xử lý (build_cutout); vật COCO không bị ảnh hưởng.
+POLE_ENABLE = os.environ.get("POLE_ENABLE", "1") != "0"
 POSE_WEIGHTS = os.environ.get("POSE_WEIGHTS", "yolov8s-pose.pt")
 POSE_IMGSZ = 960
 HAND_MIN_CONF = 0.3

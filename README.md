@@ -160,7 +160,7 @@ Ngoài người, YOLO-seg còn phát hiện vật COCO (chai, điện thoại, t
 vật nằm gần nắm tay (và gậy dò được từ nắm tay) được gộp vào mask người nên không bị làm xám cùng nền.
 
 - `HELD_ENABLE` (mặc định `1`): đặt `0` để tắt hẳn (không chạy pose, YOLO chỉ tìm người, kết quả như trước).
-- `POLE_ENABLE` (mặc định `0`): dò gậy leo núi **tắt mặc định** vì còn nhiều gậy giả (khoảng 46% trên mẫu gán nhãn). Đặt `POLE_ENABLE=1` để bật; khi bật, gậy ứng viên chỉ được gộp cho người đang được xử lý (không đổi mask/box lúc `/detect`). Vật COCO vẫn được gộp bất kể (`HELD_ENABLE` là công tắc chung).
+- `POLE_ENABLE` (mặc định `1`): dò gậy leo núi, đặt `0` để tắt. Mỗi gậy ứng viên được xác nhận bằng bộ dò đoạn thẳng LSD của OpenCV (ngưỡng `POLE_LSD_MIN` trong `config.py`, `0` = bỏ bước xác nhận). Trên mẫu 40 ảnh gán nhãn thủ công, bộ xác nhận giữ 41/44 gậy thật và loại 44/49 gậy giả, nên vẫn có thể gặp gậy giả hoặc mất gậy mờ. Gậy ứng viên chỉ được gộp cho người đang được xử lý (không đổi mask/box lúc `/detect`). Vật COCO vẫn được gộp bất kể (`HELD_ENABLE` là công tắc chung).
 - `HELD_CLASSES`: danh sách id lớp COCO coi là vật cầm tay, cách nhau bởi dấu phẩy (mặc định gồm túi, chai, cốc, điện thoại, ...; xem `config.py`).
 - `POSE_WEIGHTS` (mặc định `yolov8s-pose.pt`): trọng số YOLO-pose; tải tự động lần đầu.
 - Ngưỡng tinh chỉnh (`HELD_MIN_CONF`, `HELD_HAND_DIST`, `HELD_TOUCH_FRAC`, `HELD_MAX_AREA`) nằm trong `backend/pipeline/config.py`.
