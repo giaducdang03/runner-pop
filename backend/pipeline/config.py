@@ -90,6 +90,14 @@ POLE_TAIL_DENSE = 0.8                # cửa sổ có mật độ >= mức này 
 POLE_TAIL_SPARSE = 0.6               # phần sau cặp cửa sổ đặc cuối có mật độ TB < mức này = đuôi qua cỏ, bỏ
 POLE_LAT_MIN_PX = 8.0                # khi dò đầu gậy được lệch ngang khỏi tia tối đa
 POLE_LAT_HW = 3.0                    # max(POLE_LAT_MIN_PX, POLE_LAT_HW * hw) px, ±1 px mỗi bước
+# Kiểm tra gậy bằng đoạn thẳng LSD (linecheck.py): độ phủ trục gậy bởi đoạn LSD song song, gần trục
+POLE_LSD_MIN = 0.25                  # độ phủ tối thiểu để giữ gậy (gậy thật ~0.6, giả ~0.02); 0 = tắt kiểm tra (như trước)
+POLE_LSD_PAR_DEG = 4.0               # đoạn LSD lệch góc so với trục <= 4° mới tính là song song
+POLE_LSD_MARGIN = 3.0                # đoạn cách trục <= half_w + 3 px
+POLE_LSD_STEP = 3.0                  # px, bước lấy mẫu dọc trục khi đo độ phủ
+POLE_LSD_CLAHE_CLIP = 2.0            # CLAHE trên ảnh xám trước khi chạy LSD
+POLE_LSD_CLAHE_TILE = (8, 8)
+POLE_LSD_MAX_SIDE = 1600             # ảnh lớn hơn được thu nhỏ về cạnh dài này trước khi chạy LSD (miền đã chọn ngưỡng)
 
 THIN_BAND_PX = 2            # px, vùng unknown quanh mép gậy khi matting alpha gậy ở ảnh đầy đủ
 

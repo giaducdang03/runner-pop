@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 
 from . import config as C
+from .linecheck import LineIndex
 from .schema import Person
 
 if TYPE_CHECKING:
@@ -89,6 +90,7 @@ class _Lab:
         lab = cv2.cvtColor(blur, cv2.COLOR_RGB2LAB).astype(np.float32) / 255.0
         self.h, self.w = lab.shape[:2]
         self.flat = lab.reshape(-1, 3)
+        self.lines = LineIndex(rgb)      # đoạn LSD để kiểm tra gậy, tính lười khi cần
 
     def inside(self, pts: np.ndarray) -> np.ndarray:
         return (pts[..., 0] >= 0) & (pts[..., 0] < self.w) & (pts[..., 1] >= 0) & (pts[..., 1] < self.h)
@@ -269,6 +271,15 @@ def _candidate(lab: _Lab, scan: _Scan) -> Optional[_Cand]:
         scan.excluded.append(float(scan.angles[i]))   # gậy quá ngắn / trùng gậy đã thua
 
 
+def _lsd_ok(lab: _Lab, pole: Pole) -> bool:
+    """Gậy có đủ mép thẳng LSD dọc trục (độ phủ >= POLE_LSD_MIN). POLE_LSD_MIN = 0 tắt kiểm tra;
+    LSD lỗi (độ phủ None) thì coi như đạt để không làm hỏng request."""
+    if C.POLE_LSD_MIN <= 0:
+        return True
+    cov = lab.lines.coverage(pole)
+    return cov is None or cov >= C.POLE_LSD_MIN
+
+
 def _build(lab: _Lab, scan: _Scan, i: int, score: float) -> Optional[_Cand]:
     """Truy đầu gậy và đầu trên cho góc thứ i; None nếu không dò được đầu gậy hoặc gậy
     ngắn hơn POLE_MIN_LEN * h."""
@@ -384,7 +395,9 @@ def find_poles(rgb: np.ndarray, persons: List[Person]) -> List[Pole]:
                 cands[k] = None if scan is None else _candidate(lab, scan)
                 k += 1
         _resolve(lab, cands, rgb.shape[:2])
-        return [c.pole for c in cands.values() if c is not None]
+        # Cổng LSD đặt SAU phân xử chủ gậy (đo trên 40 ảnh gán nhãn: đặt trong vòng chọn góc để xếp hạng
+        # lại không cứu thêm gậy thật nào, chỉ sinh thêm 4-8 gậy mới chưa kiểm chứng, phần lớn trông giả)
+        return [c.pole for c in cands.values() if c is not None and _lsd_ok(lab, c.pole)]
     except Exception as e:  # noqa: BLE001
         log.warning("dò gậy thất bại, bỏ qua: %s", e)
         return []

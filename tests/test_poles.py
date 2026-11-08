@@ -141,6 +141,79 @@ def test_pole_to_work_and_polygon():
     assert np.linalg.norm(poly[0] - poly[1]) == pytest.approx(2 * 4.0 + 2)
 
 
+
+# --- kiểm tra gậy bằng đoạn LSD -----------------------------------------------
+
+def _soft_stripe():
+    """Vệt tối mềm (blur σ=6): mặt cắt vẫn dạng thanh nhưng không có mép thẳng cho LSD."""
+    rgb = _canvas()
+    st = np.full_like(rgb, 128)
+    cv2.line(st, (262, 240), (300, 560), (20, 20, 20), 6)
+    st = cv2.GaussianBlur(st, (0, 0), 6)
+    rgb[:, 250:] = st[:, 250:]
+    return rgb
+
+
+def _sparse_stripe():
+    """Dải chấm tối rải rác (40% điểm ảnh): blur nhẹ thành thanh tối, LSD không thấy mép thẳng."""
+    rgb = _canvas()
+    band = np.zeros((H, W), np.uint8)
+    cv2.line(band, (262, 240), (300, 560), 255, 8)
+    rgb[(np.random.default_rng(0).random((H, W)) < 0.4) & (band > 0)] = 20
+    return rgb
+
+
+def test_sharp_pole_has_lsd_edges_and_passes_gate(monkeypatch):
+    from backend.pipeline import config as C
+    from backend.pipeline.linecheck import LineIndex
+    monkeypatch.setattr(C, "POLE_LSD_MIN", 0.25)
+    rgb = _canvas()
+    cv2.line(rgb, (262, 240), (300, 560), (20, 20, 20), 6)
+    found = poles.find_poles(rgb, [_person()])
+    assert len(found) == 1
+    assert LineIndex(rgb).coverage(found[0]) >= 0.8
+
+
+@pytest.mark.parametrize("make", [_soft_stripe, _sparse_stripe])
+def test_bar_without_lsd_edges_is_rejected(monkeypatch, make):
+    from backend.pipeline import config as C
+    rgb = make()
+    monkeypatch.setattr(C, "POLE_LSD_MIN", 0)
+    assert len(poles.find_poles(rgb, [_person()])) == 1      # mặt cắt dạng thanh: không có cổng thì nhận
+    monkeypatch.setattr(C, "POLE_LSD_MIN", 0.25)
+    assert poles.find_poles(rgb, [_person()]) == []
+
+
+def test_lsd_min_zero_reproduces_pre_gate(monkeypatch):
+    """POLE_LSD_MIN = 0: không chạy LSD, kết quả như trước khi có cổng."""
+    from backend.pipeline import config as C
+    from backend.pipeline import linecheck
+    monkeypatch.setattr(C, "POLE_LSD_MIN", 0)
+
+    def boom(*a, **k):
+        raise AssertionError("không được chạy LSD khi tắt cổng")
+    monkeypatch.setattr(linecheck.LineIndex, "coverage", boom)
+    rgb = _soft_stripe()
+    found = poles.find_poles(rgb, [_person()])
+    assert len(found) == 1
+    assert abs(_pole_angle(found[0]) - _angle((262, 240), (300, 560))) <= 3
+
+
+def test_lsd_failure_returns_none_and_gate_passes(monkeypatch, caplog):
+    from backend.pipeline import config as C
+    from backend.pipeline.linecheck import LineIndex
+    monkeypatch.setattr(C, "POLE_LSD_MIN", 0.25)
+
+    def boom(*a, **k):
+        raise RuntimeError("LSD hỏng")
+    monkeypatch.setattr(cv2, "createLineSegmentDetector", boom)
+    rgb = _soft_stripe()
+    pl = Pole(top=(262.0, 240.0), tip=(300.0, 560.0), half_w=3.0, score=1.0, owner=0)
+    with caplog.at_level("WARNING"):
+        assert LineIndex(rgb).coverage(pl) is None
+    assert any("LSD" in r.getMessage() for r in caplog.records)
+    assert len(poles.find_poles(rgb, [_person()])) == 1      # lỗi -> coi như đạt
+
 # --- ảnh thật -----------------------------------------------------------------
 
 DATA = Path(__file__).parent / "data" / "photo_5394198.jpg"
@@ -211,3 +284,25 @@ def test_real_image_poles(monkeypatch):
     assert len(found) <= 6, found
     small = {p.idx for p in scene.persons if p.body_h < 0.5 * main.body_h}
     assert small and not any(pl.owner in small for pl in found), found
+
+
+@pytest.mark.real
+def test_real_image_false_pole_rejected_by_lsd(monkeypatch):
+    """photo_5454753: đường dò chạy dọc hàng rào / cành cây từ tay người chạy (gậy giả, độ phủ LSD 0.00)
+    phải bị cổng LSD loại -> người chính không có gậy ứng viên. Ảnh chạy như backend (chỉ thu nhỏ về
+    MAX_SIDE, ảnh 1600 px giữ nguyên)."""
+    from backend.pipeline import config as C
+    from backend.pipeline.detect import detect_scene, get_yolo
+    from backend.pipeline.imageio import resize_to_max_side
+    monkeypatch.setattr(C, "POLE_ENABLE", True)
+    try:
+        get_yolo(C.POSE_WEIGHTS)
+        get_yolo(C.YOLO_WEIGHTS)
+    except Exception as e:  # noqa: BLE001
+        pytest.skip(f"không nạp được weights YOLO: {e}")
+    bgr = cv2.imread(str(Path(__file__).parent / "data" / "photo_5454753.jpg"))
+    rgb = resize_to_max_side(np.ascontiguousarray(bgr[..., ::-1]))
+    scene = detect_scene(rgb)
+    main = max(scene.persons, key=lambda p: p.body_h)
+    assert main.hands, "cần có tay để bài test có ý nghĩa"
+    assert not scene.pole_candidates.get(main.idx), scene.pole_candidates
