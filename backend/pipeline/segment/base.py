@@ -51,7 +51,13 @@ def work_scene(scene: Scene, person: Person, roi: Roi) -> Tuple[Scene, Person]:
     Dùng để tính mask khởi tạo và vùng loại trừ người khác (FR-37) ngay ở độ phân giải làm việc."""
     def conv(p: Person) -> Person:
         m = None if p.mask is None else roi.to_work(p.mask, cv2.INTER_NEAREST)
-        return Person(idx=p.idx, box=box_to_work(p.box, roi), conf=p.conf, mask=m)
+        return Person(
+            idx=p.idx, box=box_to_work(p.box, roi), conf=p.conf, mask=m,
+            body_box=None if p.body_box is None else box_to_work(p.body_box, roi),
+            hands=[((x - roi.x1) * roi.scale, (y - roi.y1) * roi.scale) for x, y in p.hands],
+            held=list(p.held),
+            poles=[pl.to_work(roi) for pl in p.poles],
+        )
 
     person_w = conv(person)
     persons_w = [person_w if p is person else conv(p) for p in scene.persons]

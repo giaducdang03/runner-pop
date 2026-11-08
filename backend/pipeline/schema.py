@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
 from .cache import StageCache
 from .trace import Trace
+
+if TYPE_CHECKING:
+    from .poles import Pole
 
 
 @dataclass
@@ -16,6 +19,21 @@ class Person:
     box: Tuple[int, int, int, int]       # x1, y1, x2, y2 (toạ độ ảnh làm việc)
     conf: float
     mask: Optional[np.ndarray] = field(default=None, repr=False)  # uint8 0/255
+    body_box: Optional[Tuple[int, int, int, int]] = None   # box thân người trước khi gộp vật cầm tay; None = trùng box
+    hands: List[Tuple[float, float]] = field(default_factory=list)   # tâm nắm tay (toạ độ ảnh làm việc)
+    held: List[str] = field(default_factory=list)          # nhãn vật đã gộp: "pole" hoặc tên lớp COCO
+    poles: List["Pole"] = field(default_factory=list)      # gậy đã gộp vào mask
+
+    @property
+    def foot_y(self) -> int:
+        """y của chân thân người (không tính vật cầm tay thò xuống thấp hơn)."""
+        return (self.body_box or self.box)[3]
+
+    @property
+    def body_h(self) -> int:
+        """Chiều cao thân người."""
+        b = self.body_box or self.box
+        return b[3] - b[1]
 
     @property
     def area(self) -> int:
