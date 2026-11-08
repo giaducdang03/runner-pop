@@ -319,7 +319,7 @@ render_pipeline("Pipeline 1 · Tiền xử lý & phát hiện người", st.sess
 # ---------------------------------------------------------------- chọn người
 c1, c2 = st.columns([3, 2])
 with c1:
-    st.image(f"{API}/session/{sid}/preview.jpg", caption="Người phát hiện được", use_container_width=True)
+    st.image(api_get(f"/session/{sid}/preview.jpg").content, caption="Người phát hiện được", use_container_width=True)
 
 manual_box = None
 with c2:
@@ -525,5 +525,5 @@ elif st.session_state.get("pdf") and not _pdf_ok:
 
 with st.expander("Debug: alpha & trimap"):
     _e1, _e2 = st.columns(2)
-    _e1.image(f"{API}/session/{sid}/alpha.png", caption="Alpha matte", use_container_width=True)
-    _e2.image(f"{API}/session/{sid}/trimap.png", caption="Trimap (xám = vùng unknown)", use_container_width=True)
+    _e1.image(api_get(f"/session/{sid}/alpha.png").content, caption="Alpha matte", use_container_width=True)
+    _e2.image(api_get(f"/session/{sid}/trimap.png").content, caption="Trimap (xám = vùng unknown)", use_container_width=True)
