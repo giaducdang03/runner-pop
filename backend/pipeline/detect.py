@@ -233,6 +233,23 @@ def detect_scene(rgb: np.ndarray, preprocess: str = "auto",
                     cv2.circle(vis, (int(round(hx)), int(round(hy))), r, (255, 0, 0), -1)
             s.show(vis)
 
+    if persons and C.HELD_ENABLE:
+        from .held import merge_pole
+        from .poles import find_poles
+        with trace.stage("held", "Đồ vật cầm tay (gậy, …)") as s:
+            n_poles = 0
+            try:
+                for pole in find_poles(rgb, persons):
+                    merge_pole(persons[pole.owner], pole, rgb.shape)
+                    n_poles += 1
+                s.note = f"{n_poles} gậy"
+            except Exception as e:      # không để lỗi gộp vật cầm tay làm hỏng request
+                log.warning("held: %s", e)
+                s.note = f"lỗi, bỏ qua vật cầm tay: {e}"
+            if n_poles:
+                best = persons[0] if len(persons) == 1 else max(persons, key=lambda q: len(q.poles))
+                s.overlay(rgb, best.mask if best.mask is not None else box_to_mask(best.box, rgb.shape))
+
     suggested = suggest_person(Scene(rgb=rgb, persons=persons, quality=qd)) if persons else 0
     if persons:
         with trace.stage("select", "Tự chọn người chạy chính",
