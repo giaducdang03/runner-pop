@@ -1,0 +1,8 @@
+# Chỉ gửi vào build context những gì image cần (allowlist)
+*
+!backend/
+!frontend/
+!docker/
+!requirements.txt
+**/__pycache__
+**/*.pyc

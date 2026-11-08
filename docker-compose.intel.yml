@@ -1,0 +1,18 @@
+# Override GPU Intel (OpenVINO). Dùng kèm docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.intel.yml up --build
+#
+# Mặc định cho Windows + Docker Desktop (WSL2): GPU đi qua /dev/dxg, driver lấy từ /usr/lib/wsl.
+# Host Linux thật: thay hai mục dưới bằng
+#     devices: ["/dev/dri:/dev/dri"]
+# và bỏ mount /usr/lib/wsl.
+services:
+  backend:
+    build:
+      target: intel
+    image: runnerpop-backend:intel
+    environment:
+      ACCEL_BACKEND: openvino
+    devices:
+      - /dev/dxg:/dev/dxg
+    volumes:
+      - /usr/lib/wsl:/usr/lib/wsl

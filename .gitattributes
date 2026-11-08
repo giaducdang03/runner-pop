@@ -1,0 +1,3 @@
+# script chạy trong container Linux: luôn LF
+*.sh text eol=lf
+Dockerfile text eol=lf
