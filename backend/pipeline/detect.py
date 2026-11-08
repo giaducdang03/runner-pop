@@ -223,9 +223,9 @@ def detect_scene(rgb: np.ndarray, preprocess: str = "auto",
     if persons and C.HELD_ENABLE:
         from .pose import detect_hands      # nhập lười: pose.py nhập lại get_yolo từ module này
         with trace.stage("pose", "YOLO-pose: vị trí nắm tay") as s:
-            detect_hands(det_img, persons, device)
+            err = detect_hands(det_img, persons, device)
             n_hands = sum(len(p.hands) for p in persons)
-            s.note = f"{n_hands} tay"
+            s.note = f"lỗi, bỏ qua vật cầm tay: {err}" if err else f"{n_hands} tay"
             vis = det_img.copy()
             r = max(4, vis.shape[1] // 200)
             for p in persons:

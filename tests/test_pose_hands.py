@@ -39,3 +39,29 @@ def test_detect_hands_failure_keeps_pipeline(monkeypatch):
     p = Person(idx=0, box=(0, 0, 10, 10), conf=0.9)
     pose.detect_hands(np.zeros((20, 20, 3), np.uint8), [p], None)
     assert p.hands == []
+
+
+def _scene_with_fakes(monkeypatch, pose_fails=True):
+    from backend.pipeline import detect
+    from backend.pipeline.trace import Trace
+    from tests.test_detect_device import FakeModel
+    monkeypatch.setattr(detect, "get_yolo", lambda w=None, device=None: FakeModel("m"))
+
+    def boom(*a, **k):
+        raise RuntimeError("no pose weights")
+    monkeypatch.setattr(pose, "get_yolo", boom)
+    return detect.detect_scene(np.zeros((40, 60, 3), np.uint8), preprocess="none", trace=Trace())
+
+
+def test_pose_failure_is_noted_in_trace(monkeypatch):
+    monkeypatch.setattr(C, "HELD_ENABLE", True)
+    scene = _scene_with_fakes(monkeypatch)
+    note = next(s for s in scene.trace.stages if s.key == "pose").note
+    assert "lỗi" in note and "no pose weights" in note and "0 tay" not in note
+    assert len(scene.persons) == 1 and scene.persons[0].hands == []
+
+
+def test_held_disabled_has_no_pose_stage(monkeypatch):
+    monkeypatch.setattr(C, "HELD_ENABLE", False)
+    scene = _scene_with_fakes(monkeypatch)
+    assert all(s.key != "pose" for s in scene.trace.stages)

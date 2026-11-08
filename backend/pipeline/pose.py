@@ -51,8 +51,9 @@ def attach_hands(persons: List[Person], pose_boxes: np.ndarray, pose_kps: np.nda
 
 
 def detect_hands(rgb: np.ndarray, persons: List[Person],
-                 device: Optional[accel.Device] = None) -> None:
-    """Chạy YOLO-pose rồi điền hands cho từng người. Lỗi bất kỳ: log và để hands rỗng."""
+                 device: Optional[accel.Device] = None) -> Optional[str]:
+    """Chạy YOLO-pose rồi điền hands cho từng người. Không bao giờ raise: lỗi bất kỳ thì log,
+    để hands rỗng và trả chuỗi lỗi (thành công trả None) để stage ghi vào trace."""
     try:
         kw = predict_kwargs(device) if device is not None else {}
         if not kw.get("half"):
@@ -60,11 +61,13 @@ def detect_hands(rgb: np.ndarray, persons: List[Person],
         res = get_yolo(C.POSE_WEIGHTS, device).predict(
             rgb, imgsz=C.POSE_IMGSZ, conf=0.25, verbose=False, **kw)[0]
         if res.boxes is None or len(res.boxes) == 0 or res.keypoints is None:
-            return
+            return None
         boxes = res.boxes.xyxy.cpu().numpy()
         kps = res.keypoints.data.cpu().numpy()
         attach_hands(persons, boxes, kps)
+        return None
     except Exception as e:  # noqa: BLE001
         log.warning("YOLO-pose thất bại, bỏ qua vật cầm tay: %s", e)
         for p in persons:
             p.hands = []
+        return f"{type(e).__name__}: {e}"
