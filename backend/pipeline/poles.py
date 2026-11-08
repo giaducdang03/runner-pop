@@ -212,6 +212,32 @@ def _trace(lab: _Lab, o: np.ndarray, d: np.ndarray, n: np.ndarray, rs: np.ndarra
     return np.array([grid[i, j] for i, j in best])
 
 
+def _trim_sparse_tail(path: np.ndarray, o: np.ndarray, d: np.ndarray, h: float) -> np.ndarray:
+    """Cắt đuôi thưa của đường dò: thân gậy thật cho mẫu đạt gần liên tục (mật độ ~1), còn khi đường
+    dò chạy tiếp qua cỏ / nền nhiều vân thì chỉ thỉnh thoảng gặp mẫu đạt (mật độ 0-0.6) nhưng vẫn
+    không hụt quá POLE_GAP. Chia đường theo cửa sổ POLE_TAIL_WIN * h; đầu gậy = cuối cặp cửa sổ đặc
+    (>= POLE_TAIL_DENSE) cuối cùng, nếu phần sau nó thưa (TB < POLE_TAIL_SPARSE); không thì giữ nguyên.
+    `path` theo thứ tự đi (điểm đầu gần nắm tay), dùng được cho cả đường đi xuống và đi lên."""
+    t = np.abs((path - o) @ d - float((path[0] - o) @ d))      # quãng đường dọc tia từ điểm đầu
+    win = C.POLE_TAIL_WIN * h
+    if win <= 0 or t[-1] < 2 * win:
+        return path
+    idx = (t // win).astype(int)
+    nwin = int(idx[-1]) + 1
+    counts = np.bincount(idx, minlength=nwin).astype(np.float64)
+    lengths = np.full(nwin, win)
+    lengths[-1] = t[-1] - (nwin - 1) * win + _R_STEP            # cửa sổ cuối chỉ dài tới đầu gậy
+    dens = counts * _R_STEP / np.maximum(lengths, _R_STEP)
+    dense = dens >= C.POLE_TAIL_DENSE
+    pairs = np.flatnonzero(dense[:-1] & dense[1:])
+    if len(pairs) == 0:
+        return path
+    j = int(pairs[-1]) + 1                                      # cửa sổ đặc cuối cùng
+    if j >= nwin - 1 or dens[j + 1:].mean() >= C.POLE_TAIL_SPARSE:
+        return path
+    return path[idx <= j]
+
+
 def _narrowest(hits: np.ndarray, hws_px: np.ndarray) -> float:
     """Bề rộng hẹp nhất có số mẫu đạt >= POLE_HW_NARROW x tốt nhất (dải rộng dễ đạt trên nền
     nhiều vân nên không lấy thẳng argmax)."""
@@ -259,6 +285,9 @@ def _build(lab: _Lab, scan: _Scan, i: int, score: float) -> Optional[_Cand]:
                 hws_px, gap, lat)
     if path is None:                      # không dò được đầu gậy = không có bằng chứng
         return None
+    path = _trim_sparse_tail(path, o, d, h)       # đuôi thưa qua cỏ / nền không phải gậy
+    if up is not None:
+        up = _trim_sparse_tail(up, o, d, h)
     tip = path[-1]
     top = o if up is None else up[-1]
     hw = _refine_hw(lab, path, n, hws_px)

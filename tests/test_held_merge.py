@@ -7,13 +7,16 @@ from backend.pipeline.schema import Person
 from tests.test_pose_hands import _scene_with_fakes
 
 
-def test_merge_pole_extends_mask_and_box():
+def test_merge_pole_extends_box_but_not_mask():
+    # Gậy KHÔNG được vẽ vào mask người: mask là mồi cho engine (gate BiRefNet nở mask ra ~4% box),
+    # vẽ gậy vào sẽ kéo cả nền / vật của người khác cạnh gậy vào alpha. Alpha gậy do thin.overlay_poles lo.
     mask = np.zeros((200, 200), np.uint8)
     mask[20:100, 40:80] = 255
+    before = mask.copy()
     p = Person(idx=0, box=(40, 20, 80, 100), conf=0.9, mask=mask)
     pole = Pole(top=(100, 60), tip=(100, 180), half_w=3.0, score=0.9, owner=0)
     held.merge_pole(p, pole, (200, 200, 3))
-    assert p.mask[120, 100] == 255
+    assert np.array_equal(p.mask, before)
     assert p.box[0] <= 40 and p.box[3] >= 180 and p.box[2] >= 103
     assert p.body_box == (40, 20, 80, 100)
     assert p.held == ["pole"] and p.poles == [pole]

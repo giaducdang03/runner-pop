@@ -85,6 +85,9 @@ POLE_GAP = 0.05                      # khoảng hụt tối đa (* h) khi dò đ
 POLE_GRIP_UP = 0.12                  # dò ngược lên trên nắm tay tối đa 0.12h (tay cầm)
 POLE_MIN_LEN = 0.2                   # gậy dò được (|tip − top|) ngắn hơn 0.2h thì bỏ
 POLE_HW_NARROW = 0.9                 # chọn bề rộng hẹp nhất có số mẫu đạt >= 0.9 × tốt nhất
+POLE_TAIL_WIN = 0.03                 # cắt đuôi thưa: cửa sổ đo mật độ mẫu đạt dọc gậy (* h)
+POLE_TAIL_DENSE = 0.8                # cửa sổ có mật độ >= mức này là thân gậy (thân gậy thật ~1.0)
+POLE_TAIL_SPARSE = 0.6               # phần sau cặp cửa sổ đặc cuối có mật độ TB < mức này = đuôi qua cỏ, bỏ
 POLE_LAT_MIN_PX = 8.0                # khi dò đầu gậy được lệch ngang khỏi tia tối đa
 POLE_LAT_HW = 3.0                    # max(POLE_LAT_MIN_PX, POLE_LAT_HW * hw) px, ±1 px mỗi bước
 

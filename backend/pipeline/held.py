@@ -14,15 +14,14 @@ from .schema import Person
 
 
 def merge_pole(person: Person, pole: Pole, shape) -> None:
-    """Vẽ gậy vào mask người, nới box theo gậy (cắt vào ảnh), ghi nhãn "pole".
+    """Nới box theo gậy (cắt vào ảnh) để ROI bao trọn gậy, ghi nhãn "pole" và lưu gậy.
+    KHÔNG vẽ gậy vào mask: mask là mồi của engine (gate BiRefNet nở mask ~4% box), gậy trong mask
+    kéo cả nền / vật người khác cạnh gậy vào alpha. Alpha gậy do thin.overlay_poles tính riêng.
     Lần gộp đầu tiên lưu box thân người vào `body_box`."""
     h, w = shape[:2]
     if person.body_box is None:
         person.body_box = tuple(person.box)
-    if person.mask is None:
-        person.mask = box_to_mask(person.box, shape)
     poly = pole.polygon()
-    cv2.fillConvexPoly(person.mask, np.round(poly).astype(np.int32), 255)
     x1, y1, x2, y2 = person.box
     px1 = int(np.floor(poly[:, 0].min()))
     py1 = int(np.floor(poly[:, 1].min()))

@@ -65,8 +65,14 @@ def overlay_poles(cutout: Cutout, scene: Scene, person: Person,
     with trace.stage("thin", "Alpha gậy ở độ phân giải gốc",
                      note=f"{len(person.poles)} gậy") as s:
         try:
-            init = person.mask if person.mask is not None else np.zeros(cutout.alpha.shape, np.uint8)
-            excl = exclusion_mask(scene, person, init)
+            # mask người không chứa gậy (held.merge_pole không vẽ gậy vào mask, tránh engine tràn);
+            # khi tính vùng của người khác, dải gậy vẫn là "của mình" để gậy đè lên người đứng xa
+            # hơn không bị xoá
+            own = (person.mask.copy() if person.mask is not None
+                   else np.zeros(cutout.alpha.shape, np.uint8))
+            for pole in person.poles:
+                cv2.fillConvexPoly(own, np.round(pole.polygon()).astype(np.int32), 255)
+            excl = exclusion_mask(scene, person, own)
             alpha = cutout.alpha.copy()
             for pole in person.poles:
                 box = _crop_box(pole, alpha.shape)

@@ -89,6 +89,22 @@ def test_textured_background_is_not_a_pole():
     assert poles.find_poles(rgb, [_person()]) == []
 
 
+def test_tip_stops_where_pole_ends_not_in_sparse_texture():
+    """Gậy đặc từ tay xuống y=420, sau đó trên cùng đường thẳng chỉ còn vệt lổn nhổn (như cỏ):
+    hụt nhỏ hơn POLE_GAP * h nên đường dò vẫn đi tiếp được, nhưng đầu gậy phải dừng ở cuối đoạn đặc."""
+    rgb = _canvas()
+
+    def x_at(y):
+        return 262 + (y - 240) * 38 // 320
+
+    cv2.line(rgb, (x_at(240), 240), (x_at(420), 420), (20, 20, 20), 6)
+    for y in range(432, 590, 19):                       # chấm ~7 px mỗi 19 px: mật độ ~0.35 như đuôi
+        cv2.line(rgb, (x_at(y), y), (x_at(y + 1), y + 1), (20, 20, 20), 6)   # qua cỏ thật, hụt < 0.05h
+    found = poles.find_poles(rgb, [_person()])
+    assert len(found) == 1
+    assert 400 <= found[0].tip[1] <= 440
+
+
 def test_dashed_bar_is_not_a_continuous_pole():
     """Thanh đứt quãng (khoảng hụt > POLE_GAP * h) không được tính là một gậy liền."""
     rgb = _canvas()

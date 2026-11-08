@@ -22,7 +22,7 @@ def _mask(y1, y2, x1, x2):
     return m
 
 
-def _scene(with_pole=True, other=False):
+def _scene(with_pole=True, other=False, other_far=False):
     rgb = np.full((H, W, 3), 170, np.uint8)
     rgb[300:1300, 1000:1150] = (200, 60, 60)
     p0, p1 = np.array(TOP), np.array(TIP)
@@ -35,6 +35,12 @@ def _scene(with_pole=True, other=False):
         rgb[1000:1500, 1230:1330] = (40, 200, 40)
         people.append(Person(idx=1, box=(1230, 1000, 1330, 1500), conf=0.9,
                              mask=_mask(1000, 1500, 1230, 1330)))
+    if other_far:      # người khác đứng XA hơn (chân cao hơn): phần gậy đè lên họ vẫn là của người cầm
+        rgb[900:1250, 1230:1330] = (40, 200, 40)
+        cv2.line(rgb, tuple(np.round(p0).astype(int)), tuple(np.round(p1).astype(int)),
+                 (20, 20, 20), int(2 * HALF_W))
+        people.append(Person(idx=1, box=(1230, 900, 1330, 1250), conf=0.9,
+                             mask=_mask(900, 1250, 1230, 1330)))
     return Scene(rgb=rgb, persons=people)
 
 
@@ -74,6 +80,18 @@ def test_overlay_respects_other_person_exclusion(body_only_birefnet):
     inter = om & (line > 0)
     assert inter.sum() > 100
     assert c.alpha[inter].max() <= 0.01
+
+
+def test_pole_over_farther_person_keeps_alpha(body_only_birefnet):
+    # gậy không nằm trong mask người cầm (held.merge_pole không vẽ gậy vào mask), nhưng phần gậy
+    # đè lên người đứng xa hơn vẫn phải thuộc về người cầm
+    scene = _scene(other_far=True)
+    c = build_cutout(scene, scene.persons[0], "birefnet")
+    om = scene.persons[1].mask > 127
+    pts = [(x, y) for x, y in _axis_pts(40, 0.0, 1.0) if om[int(round(y)), int(round(x))]]
+    assert len(pts) >= 10
+    for x, y in pts:
+        assert c.alpha[int(round(y)), int(round(x))] >= 0.8, (x, y)
 
 
 def test_no_poles_cutout_unchanged(body_only_birefnet):
