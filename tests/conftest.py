@@ -35,3 +35,11 @@ def make_cutout():
         return Cutout(image=img.copy(), alpha=alpha, foreground=img.copy(), background=img.copy(),
                       trimap=np.where(alpha > 0, 255, 0).astype(np.uint8))
     return _make
+
+
+@pytest.fixture(autouse=True)
+def _no_pole_sam(monkeypatch, request):
+    """Mặc định tắt MobileSAM trong test (không tải trọng số); test cần thì đánh dấu `pole_sam`."""
+    if "pole_sam" not in request.keywords:
+        from backend.pipeline import config as C
+        monkeypatch.setattr(C, "POLE_SAM", False)

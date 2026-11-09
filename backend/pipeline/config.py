@@ -140,6 +140,21 @@ POLE_REFINE_END_TEX = 4.0            # gradient Lab nền ở đầu gậy > m�
 POLE_REFINE_AREA = 4.0               # mask / dải gậy vượt mức này thì không mở rộng (nghi tràn)
 POLE_REFINE_AREA_H = 0.01            # phần thêm vượt 0.01 * h^2 px thì không mở rộng
 
+# Tách gậy bằng MobileSAM (polesam.py), nhắc bằng điểm dọc trục gậy dò được; lỗi / không chắc thì dùng
+# cách cũ ở trên (polemask) hoặc dải gậy. POLE_SAM=0 để tắt.
+POLE_SAM = os.environ.get("POLE_SAM", "1") != "0"
+POLE_SAM_WEIGHTS = os.environ.get("POLE_SAM_WEIGHTS", str(Path(ACCEL_CACHE_DIR) / "mobile_sam.pt"))
+POLE_SAM_POS = (0.07, 0.15, 0.25)     # điểm dương cách chỗ nắm (* h) về mỗi phía, không quá nửa đoạn tới đầu gậy
+POLE_SAM_NEG = 0.02                   # điểm âm cách trục half_w + 0.02 * h, hai bên mỗi điểm dương
+POLE_SAM_PAD = 0.15                   # crop quanh gậy: nới max(0.15 * chiều dài gậy, 0.05 * h)
+POLE_SAM_BAND = 0.06                  # bỏ pixel mask cách đường trục > 0.06 * h (tràn)
+POLE_SAM_MIN_AREA = 0.3               # mask < 0.3 * diện tích dải gậy: SAM trượt, dùng cách cũ
+POLE_SAM_AREA_H = 0.025               # mask > 0.025 * h^2: nghi tràn, dùng cách cũ
+POLE_SAM_SNAP = 0.015                 # dời điểm dương về tâm gậy trong ±max(6 px, 0.015 * h) theo pháp tuyến
+POLE_SAM_SNAP_MIN = 12.0              # độ "dạng thanh" tối thiểu (Lab 8 bit) để giữ điểm dương
+POLE_SAM_WIDTH_MUL = 3.0              # bề rộng TB của mask (diện tích / chiều dài; tính cả bàn tay, gậy song song) > max(3 * bề rộng dải,
+POLE_SAM_WIDTH_H = 0.025              #   0.025 * h): mảng nền, dùng cách cũ (gậy + tay ~0.02h, mảng lá ~0.05h)
+
 # Lớp COCO coi là vật cầm tay (YOLO-seg phát hiện cùng lúc với người); mặc định bỏ phương tiện, động vật, đồ nội thất lớn
 _HELD_DEFAULT = ("24,25,26,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,"
                  "50,51,52,53,54,55,63,64,65,66,67,73,74,75,76,77,78,79")
