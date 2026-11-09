@@ -239,7 +239,8 @@ with st.sidebar:
         pre_spec = pre_mode
     find_poles = st.toggle("Tìm gậy cầm tay", value=False,
                            help="Dò gậy leo núi từ nắm tay và tách gậy bằng MobileSAM để giữ màu cả gậy. "
-                                "Chậm hơn (thêm khoảng 0.5–1 s mỗi gậy); đổi công tắc sẽ phát hiện lại ảnh.")
+                                "Chỉ dò gậy của người đang chọn (khi xử lý), nên đổi người sẽ dò lại cho người đó. "
+                                "Chậm hơn (thêm khoảng 1–2 s dò + 0.15–0.5 s mỗi gậy); đổi công tắc sẽ phát hiện lại ảnh.")
     method = st.radio("Thuật toán tách nền", list(ENGINE_LABELS),
                       index=list(ENGINE_LABELS).index(ENGINE_DEFAULT),
                       format_func=ENGINE_LABELS.get)
@@ -264,6 +265,24 @@ with st.sidebar:
             st.rerun()
     elif prep.get("state") == "done" and prepare_note(device, prep.get("used_device", "")):
         st.caption(prepare_note(device, prep.get("used_device", "")))
+    poles_ready = True
+    if find_poles:                                      # chế độ gậy cần nạp YOLO-pose + MobileSAM trước khi dùng
+        pprep = prepare_state("poles", device)
+        pplan = sidebar_prepare_plan(pprep.get("state"))
+        if pplan["post"]:
+            pprep = prepare_state("poles", device, post=True) or pprep
+            pplan = sidebar_prepare_plan(pprep.get("state"))
+        poles_ready = pplan["ready"]
+        if pplan["polling"]:
+            prepare_status("poles", device, "Tìm gậy (YOLO-pose + MobileSAM)")
+        elif pplan["show_error"]:
+            st.warning(f"Nạp model tìm gậy gặp lỗi: {pprep.get('detail', '')}. Vẫn có thể thử xử lý.")
+            if st.button("Thử nạp lại model tìm gậy"):
+                prepare_state("poles", device, post=True)
+                st.rerun()
+        elif pprep.get("state") == "done":
+            st.caption("Model tìm gậy đã sẵn sàng" + (f" ({pprep['used_device']})" if pprep.get("used_device") else "") + ".")
+    ready = ready and poles_ready
     st.caption(f"Backend: {API}")
     warming = False
     try:
@@ -286,6 +305,10 @@ with st.sidebar:
 up = st.file_uploader("Tải ảnh người chạy", type=["jpg", "jpeg", "png", "webp"], disabled=not ready)
 if up is None:
     st.info("Tải ảnh lên để bắt đầu.")
+    st.stop()
+
+if not poles_ready:         # đổi công tắc gậy thì phát hiện lại ảnh, nhưng chỉ sau khi model gậy nạp xong
+    st.info("Đang nạp model tìm gậy… ảnh sẽ được phát hiện lại ngay khi xong.")
     st.stop()
 
 file_key = f"{up.name}-{up.size}-{pre_spec}-{find_poles}"

@@ -94,6 +94,7 @@ def warmup() -> None:
 # --------------------------------------------------------------------------
 _PREPARE: Dict[Tuple[str, str], dict] = {}        # (engine, device_mode) -> {state, detail, used_device}
 _PREPARE_LOCK = threading.Lock()
+POLES_KEY = "poles"      # "engine" đặc biệt của /prepare: model dò gậy (YOLO-pose + MobileSAM)
 
 
 def _prepare_view(engine: str, device_mode: str) -> dict:
@@ -107,9 +108,26 @@ def _set_prepare(engine: str, device_mode: str, state: str, detail: str = "", us
         _PREPARE[(engine, device_mode)] = {"state": state, "detail": detail, "used_device": used_device}
 
 
+def prepare_poles(device_mode: str) -> str:
+    """Nạp mọi thứ chế độ "Tìm gậy" cần: YOLO-pose (nắm tay) và MobileSAM, kể cả convert / compile encoder GPU
+    rồi chạy thử một lượt. Trả nhãn thiết bị của bước nặng nhất ("CPU" nếu encoder SAM chạy CPU). Có thể raise."""
+    from .pipeline import polesam
+    from .pipeline.detect import get_yolo
+    if not C.POLE_ENABLE:
+        return ""
+    dev = accel.resolve(device_mode)
+    get_yolo(C.POSE_WEIGHTS, dev)
+    if C.POLE_SAM:
+        return accel.device_label(dev) if polesam.warmup(dev) else "CPU"
+    return accel.device_label(dev)
+
+
 def prepare_engine(engine: str, device_mode: str) -> str:
     """Chạy build_cutout trên cảnh giả (không cache) để nạp / biên dịch model đúng như request thật.
-    Trả về nhãn thiết bị của bước nặng thực sự dùng ("" nếu không có). Có thể raise."""
+    Trả về nhãn thiết bị của bước nặng thực sự dùng ("" nếu không có). Có thể raise.
+    engine = POLES_KEY: nạp model của chế độ "Tìm gậy" (prepare_poles)."""
+    if engine == POLES_KEY:
+        return prepare_poles(device_mode)
     scene, person = _dummy_scene_person()
     cut = P.build_cutout(scene, person, engine, P.SegParams(device_mode=device_mode, cache=None))
     stages = cut.trace.stages if getattr(cut, "trace", None) else []
@@ -129,8 +147,8 @@ def _prepare_run(engine: str, device_mode: str) -> None:
 
 
 def _check_prepare_args(engine: str) -> None:
-    if engine not in P.engine_names():
-        raise HTTPException(400, f"Engine '{engine}' không tồn tại. Hiện có: {', '.join(P.engine_names())}")
+    if engine != POLES_KEY and engine not in P.engine_names():
+        raise HTTPException(400, f"Engine '{engine}' không tồn tại. Hiện có: {', '.join(P.engine_names())}, {POLES_KEY}")
 
 
 @asynccontextmanager

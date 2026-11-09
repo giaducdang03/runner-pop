@@ -223,3 +223,37 @@ def test_persistent_error_does_not_loop():
     assert be.runs == 1
     plan = ui_helpers.sidebar_prepare_plan(be.get())
     assert plan["ready"] and plan["show_error"] and not plan["post"]
+
+
+def test_poles_prepare_loads_pose_and_sam(client, monkeypatch):
+    from backend.pipeline import accel, detect, polesam
+    seen = {}
+    monkeypatch.setattr(main.C, "POLE_ENABLE", True)
+    monkeypatch.setattr(main.C, "POLE_SAM", True)
+    dev = accel.Device(kind="gpu", backend="openvino", name="fake", runtime="openvino", dtype="fp16")
+    monkeypatch.setattr(accel, "resolve", lambda mode=None, backend=None: dev)
+    monkeypatch.setattr(detect, "get_yolo", lambda w=None, device=None: seen.setdefault("pose", (w, device)))
+    monkeypatch.setattr(polesam, "warmup", lambda d=None: seen.setdefault("sam", d) is not None)
+    assert client.post("/prepare?engine=poles&device=auto").json()["state"] in ("running", "done")
+    j = _wait(client, "poles")
+    assert j["state"] == "done" and "fake" in j["used_device"]
+    assert seen["pose"][0] == main.C.POSE_WEIGHTS and seen["sam"] is dev
+
+
+def test_poles_prepare_error_does_not_block(client, monkeypatch):
+    from backend.pipeline import polesam
+    monkeypatch.setattr(main.C, "POLE_ENABLE", True)
+    monkeypatch.setattr(main.C, "POLE_SAM", True)
+    monkeypatch.setattr(polesam, "warmup", lambda d=None: (_ for _ in ()).throw(RuntimeError("không nạp được")))
+    from backend.pipeline import detect
+    monkeypatch.setattr(detect, "get_yolo", lambda w=None, device=None: None)
+    client.post("/prepare?engine=poles&device=cpu")
+    j = _wait(client, "poles", "cpu")
+    assert j["state"] == "error" and "không nạp được" in j["detail"]
+    assert ui_helpers.engine_ready(j["state"])          # lỗi không chặn giao diện
+
+
+def test_poles_prepare_disabled_is_instant(client, monkeypatch):
+    monkeypatch.setattr(main.C, "POLE_ENABLE", False)
+    client.post("/prepare?engine=poles")
+    assert _wait(client, "poles")["state"] == "done"
