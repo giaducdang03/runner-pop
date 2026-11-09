@@ -41,7 +41,7 @@ class _FakeEngine:
 def _patch_engine(monkeypatch):
     eng = _FakeEngine()
     monkeypatch.setattr(base.ENGINES, "get", lambda m: eng)
-    monkeypatch.setattr(seg, "overlay_poles", lambda c, s, p, t: c)
+    monkeypatch.setattr(seg, "overlay_poles", lambda c, s, p, t, d="auto": c)
     return eng
 
 

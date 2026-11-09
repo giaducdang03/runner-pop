@@ -10,6 +10,7 @@ from typing import Optional, Tuple
 import cv2
 import numpy as np
 
+from . import accel
 from . import config as C
 from .matting import matte
 from .occlusion import exclusion_mask
@@ -93,7 +94,7 @@ def _sam_trimap(box, pm: PoleMask) -> np.ndarray:
 
 
 def overlay_poles(cutout: Cutout, scene: Scene, person: Person,
-                  trace: Optional[Trace] = None) -> Cutout:
+                  trace: Optional[Trace] = None, device_mode: str = "auto") -> Cutout:
     """Phủ alpha gậy (matting ở ảnh đầy đủ) lên cutout; person không có gậy thì trả nguyên cutout.
     Pixel alpha tăng: foreground = ảnh gốc, background giữ nguyên. Sửa cutout tại chỗ."""
     if not person.poles:
@@ -113,13 +114,16 @@ def overlay_poles(cutout: Cutout, scene: Scene, person: Person,
             alpha = cutout.alpha.copy()
             # pixel chắc là người (mask thân) hoặc người khác: không tính là gậy khi mở rộng mask
             known = excl | (person.mask > 127) if person.mask is not None else excl
-            n_ref = n_sam = 0
+            n_ref = n_sam = n_gpu = 0
+            device = accel.resolve(device_mode)
             for pole in person.poles:
                 box = _crop_box(pole, alpha.shape)
                 if box is None:
                     continue
-                pm = (sam_pole_mask(cutout.image, pole, person.body_h, person.hands)
+                sdbg: dict = {}
+                pm = (sam_pole_mask(cutout.image, pole, person.body_h, person.hands, sdbg, device, s)
                       if C.POLE_SAM else None)
+                n_gpu += bool(sdbg.get("gpu"))
                 use_sam = pm is not None
                 if pm is None and C.POLE_REFINE:
                     pm = refine_pole_mask(cutout.image, pole, person.body_h, known, person.hands)
@@ -141,8 +145,13 @@ def overlay_poles(cutout: Cutout, scene: Scene, person: Person,
             cutout.foreground[up] = cutout.image[up]
             cutout.alpha = alpha
             if C.POLE_SAM or C.POLE_REFINE:
-                s.note = (f"{len(person.poles)} gậy · MobileSAM {n_sam}/{len(person.poles)}"
-                          f" · mở rộng mask {n_ref}/{len(person.poles)}")
+                base = f"{len(person.poles)} gậy"
+                tail = (s.note or "")[len(base):]       # ghi chú "GPU lỗi, đã dùng CPU" do accel.with_fallback thêm
+                s.note = (f"{base} · MobileSAM {n_sam}/{len(person.poles)}"
+                          + (f" (encoder trên GPU: {n_gpu})" if n_gpu else "")
+                          + f" · mở rộng mask {n_ref}/{len(person.poles)}" + tail)
+            if n_gpu:
+                s.set_device(device)
             s.show(alpha)
         except Exception as e:  # noqa: BLE001  (không bao giờ làm hỏng request)
             log.warning("alpha gậy thất bại, giữ cutout của engine: %s", e)

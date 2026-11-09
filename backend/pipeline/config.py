@@ -75,6 +75,11 @@ POSE_WEIGHTS = os.environ.get("POSE_WEIGHTS", "yolov8s-pose.pt")
 POSE_IMGSZ = 960
 HAND_MIN_CONF = 0.3
 HAND_EXTRAP = 0.35          # nắm tay = cổ tay + 0.35 * (cổ tay − khuỷu)
+# Phạm vi dò gậy: "selected" = chỉ dò gậy của người được chọn, lúc xử lý (poles.find_poles_for; nhanh hơn nhiều ở ảnh đông
+# người: 1-2 s thay vì 4-7 s) cộng những người có tay nằm sát trục gậy vừa dò được (để phân xử gậy thuộc ai);
+# "all" = dò mọi người ngay lúc phát hiện (như trước).
+POLE_SCOPE = os.environ.get("POLE_SCOPE", "selected")
+POLE_RIVAL_DIST = 0.08                # người khác có tay cách trục gậy <= 0.08 * h (h của người chọn) được quét để phân xử
 POLE_MIN_SCORE = 0.5        # tỉ lệ mẫu trên tia có mặt cắt dạng thanh tối thiểu để nhận là gậy
 POLE_ANGLES = (45.0, 135.0)          # độ, 90 = thẳng xuống; 0.5° mỗi bước
 POLE_SEARCH = (0.06, 0.55)           # đoạn tia [r0, r1] * h tính từ nắm tay
@@ -144,12 +149,23 @@ POLE_REFINE_AREA_H = 0.01            # phần thêm vượt 0.01 * h^2 px thì k
 # cách cũ ở trên (polemask) hoặc dải gậy. POLE_SAM=0 để tắt.
 POLE_SAM = os.environ.get("POLE_SAM", "1") != "0"
 POLE_SAM_WEIGHTS = os.environ.get("POLE_SAM_WEIGHTS", str(Path(ACCEL_CACHE_DIR) / "mobile_sam.pt"))
+POLE_SAM_GPU = os.environ.get("POLE_SAM_GPU", "1") != "0"   # encoder MobileSAM chạy GPU Intel (OpenVINO) khi có; 0 = luôn CPU
 POLE_SAM_POS = (0.07, 0.15, 0.25)     # điểm dương cách chỗ nắm (* h) về mỗi phía, không quá nửa đoạn tới đầu gậy
 POLE_SAM_NEG = 0.02                   # điểm âm cách trục half_w + 0.02 * h, hai bên mỗi điểm dương
 POLE_SAM_PAD = 0.15                   # crop quanh gậy: nới max(0.15 * chiều dài gậy, 0.05 * h)
 POLE_SAM_BAND = 0.06                  # bỏ pixel mask cách đường trục > 0.06 * h (tràn)
 POLE_SAM_MIN_AREA = 0.3               # mask < 0.3 * diện tích dải gậy: SAM trượt, dùng cách cũ
 POLE_SAM_AREA_H = 0.025               # mask > 0.025 * h^2: nghi tràn, dùng cách cũ
+POLE_SAM_TOP = 0.3                    # thêm điểm dương trên cán gậy: 0.3 * khoảng cách đầu trên -> chỗ nắm, tính từ đầu trên; 0 = tắt
+# Nối / kéo dài gậy dọc trục (polesam._extend): mask SAM dừng trước đầu gậy dò được (đoạn mờ / bị che), hoặc chạm mép
+# vùng cắt quá đầu gậy (bộ dò dừng sớm vì lá che). Đặt điểm dương ngoại suy dọc trục rồi chạy SAM lần hai, chỉ nhận
+# đoạn mảnh liền mạch phủ đủ khoảng yêu cầu (gậy dò quá đầu gậy thật rơi vào đá / cỏ thì bị từ chối).
+POLE_SAM_EXT_STEP = 0.04              # khoảng cách giữa các điểm dương ngoại suy (* h); 0 = tắt nối / kéo dài
+POLE_SAM_EXT_BEYOND = 0.18            # đặt điểm tối đa tới 0.18 * h quá đầu gậy dò được (trong ảnh)
+POLE_SAM_EXT_TOL = 0.03               # mask dừng cách đầu gậy dò được <= 0.03 * h (hoặc cách mép vùng cắt) coi là đã tới nơi
+POLE_SAM_EXT_WIDTH_H = 0.012          # đoạn thêm: bề rộng TB mỗi ô <= max(3 * bề rộng dải, 0.012 * h)
+POLE_SAM_EXT_MIN = 0.02               # đoạn thêm nhận được phải dài >= 0.02 * h
+POLE_SAM_EXT_COVER = 0.5              # và phủ >= 50% khoảng đã đặt điểm dương
 POLE_SAM_SNAP = 0.015                 # dời điểm dương về tâm gậy trong ±max(6 px, 0.015 * h) theo pháp tuyến
 POLE_SAM_SNAP_MIN = 12.0              # độ "dạng thanh" tối thiểu (Lab 8 bit) để giữ điểm dương
 POLE_SAM_WIDTH_MUL = 3.0              # bề rộng TB của mask (diện tích / chiều dài; tính cả bàn tay, gậy song song) > max(3 * bề rộng dải,
