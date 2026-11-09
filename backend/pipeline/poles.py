@@ -631,3 +631,31 @@ def find_poles(rgb: np.ndarray, persons: List[Person]) -> List[Pole]:
     except Exception as e:  # noqa: BLE001
         log.warning("dò gậy thất bại, bỏ qua: %s", e)
         return []
+
+
+def _hand_near_axis(hand, pole: Pole, r: float) -> bool:
+    """Tay cách đoạn top -> tip của gậy <= r px."""
+    a, b = np.asarray(pole.top, np.float64), np.asarray(pole.tip, np.float64)
+    d = b - a
+    t = float(np.clip(np.dot(np.asarray(hand, np.float64) - a, d) / max(float(np.dot(d, d)), 1e-9), 0.0, 1.0))
+    return float(np.linalg.norm(np.asarray(hand, np.float64) - (a + t * d))) <= r
+
+
+def find_poles_for(rgb: np.ndarray, persons: List[Person], person: Person) -> List[Pole]:
+    """Gậy của riêng `person` (toạ độ ảnh làm việc). Chỉ quét tay của người đó nên nhanh hơn find_poles(rgb, persons)
+    nhiều ở ảnh đông người. Gậy của hàng xóm có thể bị gán nhầm cho `person`, nên người khác nào có tay nằm sát trục một
+    gậy vừa dò được (<= POLE_RIVAL_DIST * h) cũng được quét, rồi phân xử chủ gậy như find_poles; kết quả chỉ giữ gậy của
+    `person`. Không bao giờ raise: lỗi thì log và trả []."""
+    try:
+        mine = [pl for pl in find_poles(rgb, [person]) if pl.owner == person.idx]
+        if not mine or C.POLE_RIVAL_DIST <= 0:
+            return mine
+        r = C.POLE_RIVAL_DIST * float(person.body_h)
+        rivals = [p for p in persons if p is not person and p.hands
+                  and any(_hand_near_axis(hand, pl, r) for hand in p.hands for pl in mine)]
+        if not rivals:
+            return mine
+        return [pl for pl in find_poles(rgb, [person] + rivals) if pl.owner == person.idx]
+    except Exception as e:  # noqa: BLE001
+        log.warning("dò gậy cho một người thất bại, bỏ qua: %s", e)
+        return []

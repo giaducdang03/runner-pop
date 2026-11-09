@@ -9,7 +9,7 @@ import numpy as np
 
 from . import config as C
 from .masks import box_to_mask
-from .poles import Pole
+from .poles import Pole, find_poles_for
 from .schema import Person
 
 
@@ -39,6 +39,10 @@ def apply_poles(scene, person: Person, shape) -> int:
     if not any(p is person for p in scene.persons) or person.poles:
         return 0
     cands = scene.pole_candidates.get(person.idx)
+    if cands is None and scene.poles_lazy:
+        # chỉ dò gậy của người này (+ người có tay sát gậy để phân xử); lưu cả kết quả rỗng để không dò lại
+        cands = find_poles_for(scene.rgb, scene.persons, person)
+        scene.pole_candidates[person.idx] = cands
     if not cands:
         return 0
     for pole in cands:

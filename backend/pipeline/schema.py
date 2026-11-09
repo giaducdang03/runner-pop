@@ -54,6 +54,7 @@ class Scene:
     trace: Trace = field(default_factory=Trace, repr=False)  # các bước đã chạy, để demo
     device: Dict[str, Any] = field(default_factory=dict)  # thiết bị chạy YOLO (Device.to_dict())
     pole_candidates: Dict[int, List["Pole"]] = field(default_factory=dict)  # idx người -> gậy ứng viên (chưa gộp)
+    poles_lazy: bool = False   # True: chưa dò gậy lúc phát hiện, dò khi xử lý người được chọn (có khoá = đã dò, kể cả rỗng)
 
     def others(self, person: Person) -> List[Person]:
         return [p for p in self.persons if p is not person]

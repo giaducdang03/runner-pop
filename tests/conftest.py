@@ -43,3 +43,12 @@ def _no_pole_sam(monkeypatch, request):
     if "pole_sam" not in request.keywords:
         from backend.pipeline import config as C
         monkeypatch.setattr(C, "POLE_SAM", False)
+
+
+@pytest.fixture(autouse=True)
+def _pole_scope_all(monkeypatch, request):
+    """Mặc định dò gậy mọi người lúc phát hiện (POLE_SCOPE=all) cho các test cũ; test cần dò trễ theo người được
+    chọn đánh dấu `pole_scope`."""
+    if "pole_scope" not in request.keywords:
+        from backend.pipeline import config as C
+        monkeypatch.setattr(C, "POLE_SCOPE", "all")

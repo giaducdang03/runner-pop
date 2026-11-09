@@ -282,6 +282,7 @@ def detect_scene(rgb: np.ndarray, preprocess: str = "auto",
 
     pole_cands: dict = {}
     find = C.POLE_ENABLE if poles is None else bool(poles)
+    lazy = find and C.POLE_SCOPE == "selected"        # dò gậy khi xử lý người được chọn, không phải lúc phát hiện
     if persons and C.HELD_ENABLE:
         from .poles import find_poles
         with trace.stage("held", "Đồ vật cầm tay (gậy, …)") as s:
@@ -291,14 +292,17 @@ def detect_scene(rgb: np.ndarray, preprocess: str = "auto",
                     # pose lỗi: không có tay để làm mốc -> giữ nguyên người như trước khi có tính năng này
                     s.note = "pose lỗi, không gộp vật cầm tay"
                 else:
-                    if find:
+                    if find and lazy:
+                        pass
+                    elif find:
                         # chỉ dò; gộp lúc xử lý người được chọn (held.apply_poles trong build_cutout)
                         for pole in find_poles(rgb, persons):
                             pole_cands.setdefault(persons[pole.owner].idx, []).append(pole)
                             n_poles += 1
                     n_objs = attach_objects(persons, objects)
-                    s.note = (f"{n_poles} gậy ứng viên (gộp khi xử lý người được chọn), {n_objs} vật"
-                              if find else f"{n_poles} gậy, {n_objs} vật (tắt dò gậy)")
+                    s.note = (f"dò gậy khi xử lý người được chọn, {n_objs} vật" if lazy
+                              else f"{n_poles} gậy ứng viên (gộp khi xử lý người được chọn), {n_objs} vật" if find
+                              else f"{n_poles} gậy, {n_objs} vật (tắt dò gậy)")
                 if n_objs:
                     best = persons[0] if len(persons) == 1 else max(persons, key=lambda q: len(q.held))
                     s.overlay(rgb, best.mask if best.mask is not None else box_to_mask(best.box, rgb.shape))
@@ -315,4 +319,4 @@ def detect_scene(rgb: np.ndarray, preprocess: str = "auto",
 
     return Scene(rgb=rgb, persons=persons, det_rgb=det_img, quality=quality.to_dict(),
                  preprocess=names, attempt=attempt, suggested=suggested, trace=trace,
-                 device=device.to_dict(), pole_candidates=pole_cands)
+                 device=device.to_dict(), pole_candidates=pole_cands, poles_lazy=bool(lazy and persons and C.HELD_ENABLE and not pose_err))
