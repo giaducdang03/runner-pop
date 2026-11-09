@@ -326,6 +326,7 @@ def _run_job(job: Job, fn) -> None:
 def detect(file: UploadFile = File(...),
            preprocess: str = Query("auto", description="auto | none | danh sách bước, vd: gamma,clahe"),
            device: str = Query("auto", pattern="^(auto|cpu|gpu)$", description="auto | cpu | gpu"),
+           poles: bool = Query(False, description="true = dò gậy cầm tay (chậm hơn: dò gậy + MobileSAM khi tách nền)"),
            background: bool = Query(False, description="true = trả về ngay, theo dõi tại /session/{id}/job/detect")):
     rgb = _read_upload(file)
     sid = uuid.uuid4().hex[:12]
@@ -336,7 +337,7 @@ def detect(file: UploadFile = File(...),
     def work() -> dict:
         s.cache.clear()
         s.scene = P.detect_scene(rgb, preprocess, C.YOLO_WEIGHTS, trace=job.trace,
-                                 device_mode=device)
+                                 device_mode=device, poles=poles and C.POLE_ENABLE)
         return _detect_out(sid, s.scene).model_dump()
 
     if background:

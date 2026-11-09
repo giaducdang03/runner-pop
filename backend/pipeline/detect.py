@@ -218,10 +218,12 @@ def _run_chain_traced(trace: Trace, rgb: np.ndarray, names: List[str], prefix: s
 
 def detect_scene(rgb: np.ndarray, preprocess: str = "auto",
                  weights: str = C.YOLO_WEIGHTS, trace: Optional[Trace] = None,
-                 device_mode: str = "auto") -> Scene:
+                 device_mode: str = "auto", poles: Optional[bool] = None) -> Scene:
     """
     Tiền xử lý (theo `preprocess`) -> YOLO. Nếu không thấy ai: thử lại với conf thấp hơn,
     imgsz lớn hơn và (khi preprocess="auto") chuỗi tiền xử lý mạnh hơn.
+    `poles`: có dò gậy không (None = theo POLE_ENABLE); tắt thì không có gậy ứng viên nên bước
+    alpha gậy / MobileSAM lúc tách nền cũng bỏ qua.
     Mọi bước được ghi vào `trace` (truyền vào để theo dõi realtime) và scene.trace.
     """
     trace = trace if trace is not None else Trace()
@@ -279,6 +281,7 @@ def detect_scene(rgb: np.ndarray, preprocess: str = "auto",
                 log.warning("pose: %s", e)
 
     pole_cands: dict = {}
+    find = C.POLE_ENABLE if poles is None else bool(poles)
     if persons and C.HELD_ENABLE:
         from .poles import find_poles
         with trace.stage("held", "Đồ vật cầm tay (gậy, …)") as s:
@@ -288,14 +291,14 @@ def detect_scene(rgb: np.ndarray, preprocess: str = "auto",
                     # pose lỗi: không có tay để làm mốc -> giữ nguyên người như trước khi có tính năng này
                     s.note = "pose lỗi, không gộp vật cầm tay"
                 else:
-                    if C.POLE_ENABLE:
+                    if find:
                         # chỉ dò; gộp lúc xử lý người được chọn (held.apply_poles trong build_cutout)
                         for pole in find_poles(rgb, persons):
                             pole_cands.setdefault(persons[pole.owner].idx, []).append(pole)
                             n_poles += 1
                     n_objs = attach_objects(persons, objects)
                     s.note = (f"{n_poles} gậy ứng viên (gộp khi xử lý người được chọn), {n_objs} vật"
-                              if C.POLE_ENABLE else f"{n_poles} gậy, {n_objs} vật (tắt dò gậy)")
+                              if find else f"{n_poles} gậy, {n_objs} vật (tắt dò gậy)")
                 if n_objs:
                     best = persons[0] if len(persons) == 1 else max(persons, key=lambda q: len(q.held))
                     s.overlay(rgb, best.mask if best.mask is not None else box_to_mask(best.box, rgb.shape))

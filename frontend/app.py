@@ -237,6 +237,9 @@ with st.sidebar:
         pre_spec = ",".join(picked) or "none"
     else:
         pre_spec = pre_mode
+    find_poles = st.toggle("Tìm gậy cầm tay", value=False,
+                           help="Dò gậy leo núi từ nắm tay và tách gậy bằng MobileSAM để giữ màu cả gậy. "
+                                "Chậm hơn (thêm khoảng 0.5–1 s mỗi gậy); đổi công tắc sẽ phát hiện lại ảnh.")
     method = st.radio("Thuật toán tách nền", list(ENGINE_LABELS),
                       index=list(ENGINE_LABELS).index(ENGINE_DEFAULT),
                       format_func=ENGINE_LABELS.get)
@@ -285,11 +288,12 @@ if up is None:
     st.info("Tải ảnh lên để bắt đầu.")
     st.stop()
 
-file_key = f"{up.name}-{up.size}-{pre_spec}"
+file_key = f"{up.name}-{up.size}-{pre_spec}-{find_poles}"
 if st.session_state.get("file_key") != file_key:
     st.session_state.clear()
     st.session_state["file_key"] = file_key
-    r = requests.post(f"{API}/detect", params={"preprocess": pre_spec, "device": device, "background": "true"},
+    r = requests.post(f"{API}/detect", params={"preprocess": pre_spec, "device": device, "background": "true",
+                              "poles": str(find_poles).lower()},
                       files={"file": (up.name, up.getvalue(), up.type)}, timeout=300)
     if r.status_code != 200:
         st.error(err_msg(r))

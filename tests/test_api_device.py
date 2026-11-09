@@ -92,7 +92,7 @@ def test_default_engine_follows_config(monkeypatch):
 def test_detect_forwards_device_mode(client, monkeypatch):
     seen = {}
 
-    def fake_detect(rgb, preprocess, weights, trace=None, device_mode="auto"):
+    def fake_detect(rgb, preprocess, weights, trace=None, device_mode="auto", poles=None):
         seen["mode"] = device_mode
         return Scene(rgb=rgb, persons=[])
 
@@ -101,6 +101,24 @@ def test_detect_forwards_device_mode(client, monkeypatch):
     assert r.status_code == 200 and seen["mode"] == "cpu"
     client.post("/detect", files={"file": ("a.jpg", _jpeg(), "image/jpeg")})
     assert seen["mode"] == "auto"
+
+
+def test_detect_poles_off_by_default(client, monkeypatch):
+    seen = {}
+
+    def fake_detect(rgb, preprocess, weights, trace=None, device_mode="auto", poles=None):
+        seen["poles"] = poles
+        return Scene(rgb=rgb, persons=[])
+
+    monkeypatch.setattr(P, "detect_scene", fake_detect)
+    monkeypatch.setattr(main.C, "POLE_ENABLE", True)
+    client.post("/detect", files={"file": ("a.jpg", _jpeg(), "image/jpeg")})
+    assert seen["poles"] is False
+    client.post("/detect?poles=true", files={"file": ("a.jpg", _jpeg(), "image/jpeg")})
+    assert seen["poles"] is True
+    monkeypatch.setattr(main.C, "POLE_ENABLE", False)          # POLE_ENABLE=0 vẫn là công tắc tổng
+    client.post("/detect?poles=true", files={"file": ("a.jpg", _jpeg(), "image/jpeg")})
+    assert seen["poles"] is False
 
 
 def test_process_forwards_device_mode(client, monkeypatch):
