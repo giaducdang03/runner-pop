@@ -9,7 +9,7 @@ interface Props {
   running?: string | null;
 }
 
-/** Một pipeline thành hàng ảnh nhỏ; bấm ảnh để phóng to (←/→ đổi bước, Esc đóng). */
+/** Một pipeline thành timeline dọc: mỗi bước là một nút tròn nối bằng đường thẳng; bấm ảnh nhỏ để phóng to (←/→ đổi bước, Esc đóng). */
 export function PipelineStrip({ title, stages, running }: Props) {
   const [open, setOpen] = useState<number | null>(null);
   const total = stages.reduce((a, s) => a + s.seconds, 0);
@@ -38,30 +38,37 @@ export function PipelineStrip({ title, stages, running }: Props) {
   const cur = open !== null ? stages[open] : null;
 
   return (
-    <div>
+    <div className="tl-group">
       <p className="strip-head">
         {title}
         <span>{stages.length} bước, {total.toFixed(1)} giây</span>
       </p>
-      <div className="strip">
+      <ol className="tl">
         {stages.map((s, i) => (
-          <div className="step" key={`${s.key}-${i}`}>
-            <button type="button" className="step-thumb" disabled={!s.image} onClick={() => setOpen(i)} aria-label={`Phóng to bước ${i + 1}: ${s.label}`}>
-              {s.image && <img src={s.image} alt="" />}
-            </button>
-            <span className="step-time">{i + 1}. {s.seconds.toFixed(2)} giây{s.device ? `, ${s.device}` : ""}</span>
-            <span className="step-name">{s.label}</span>
-            {s.note && <span className="step-note">{s.note}</span>}
-          </div>
+          <li className="tl-item" key={`${s.key}-${i}`}>
+            <span className="tl-dot" aria-hidden="true">{i + 1}</span>
+            <div className="tl-body">
+              <span className="tl-name">{s.label}</span>
+              <span className="tl-time">{s.seconds.toFixed(2)} giây{s.device ? `, ${s.device}` : ""}</span>
+              {s.note && <span className="tl-note">{s.note}</span>}
+            </div>
+            {s.image && (
+              <button type="button" className="tl-thumb" onClick={() => setOpen(i)} aria-label={`Phóng to bước ${i + 1}: ${s.label}`}>
+                <img src={s.image} alt="" />
+              </button>
+            )}
+          </li>
         ))}
         {running && (
-          <div className="step" data-running="true">
-            <div className="step-thumb"><Loader size="sm" color="ink" /></div>
-            <span className="step-time">{stages.length + 1}. Đang chạy</span>
-            <span className="step-name">{running}</span>
-          </div>
+          <li className="tl-item" data-running="true">
+            <span className="tl-dot" aria-hidden="true"><Loader size={12} color="ink" /></span>
+            <div className="tl-body">
+              <span className="tl-name">{running}</span>
+              <span className="tl-time">Đang chạy</span>
+            </div>
+          </li>
         )}
-      </div>
+      </ol>
 
       <Modal opened={cur !== null} onClose={() => setOpen(null)} size="auto" centered withCloseButton={false}
              overlayProps={{ backgroundOpacity: 0.85 }} padding="md">

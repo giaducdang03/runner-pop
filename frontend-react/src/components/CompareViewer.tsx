@@ -197,7 +197,7 @@ export function CompareViewer({ sid, ver, filter, color, intensity, onIntensityC
   const showSplit = mode === "split";
 
   return (
-    <div>
+    <div className="viewer">
       {error && <Alert color="red" mb="xs">{error}</Alert>}
       <div className="stage">
         <div

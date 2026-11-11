@@ -118,45 +118,46 @@ export function Workspace({ sid, det, detectStages, ready }: Props) {
           <Alert color="yellow" p="xs">Ảnh này không có phông mờ rõ nên kết quả có thể kém chính xác. Hãy thử thuật toán khác trong Cài đặt.</Alert>
         )}
 
-        {done && !busy && (
-          <div>
-            <SegmentedControl size="xs" value={view} onChange={(v) => setView(v as typeof view)}
-                              data={[{ value: "result", label: "Kết quả" }, { value: "select", label: "Chọn người" }]} />
-          </div>
-        )}
-
-        {/* Viewer giữ nguyên trong DOM để không mất chế độ xem khi chạy lại */}
-        {done && (
-          <div hidden={!showResult}>
-            <CompareViewer sid={sid} ver={done.ver} filter={bgFilter} color={bgColor} intensity={intensity} onIntensityCommit={setIntensity} />
-          </div>
-        )}
-        {!showResult && (
-          <div className="stage">
-            <BoxDrawer src={sessionUrl(sid, "original.jpg")} width={W} height={H} persons={persons} choice={choice} onPick={pickPerson}
-                       drawing={drawing} box={box} onCommit={setBox} dim={busy}>
-              {busy && (
-                <div className="busy">
-                  <Loader size={14} color="ink" />
-                  {seg.running ?? "Đang tách nền"}
+        <div className="preview-row">
+          <div className="preview">
+            {done && (
+              <div className="preview-head">
+                {!busy ? (
+                  <SegmentedControl size="xs" value={view} onChange={(v) => setView(v as typeof view)}
+                                    data={[{ value: "result", label: "Kết quả" }, { value: "select", label: "Chọn người" }]} />
+                ) : <span />}
+                <div className={busy ? "is-stale" : undefined}>
+                  <BibTag value={bibValue} detected={!!done.res.bib} onChange={setBibValue} />
                 </div>
-              )}
-            </BoxDrawer>
+              </div>
+            )}
+            {/* Viewer giữ nguyên trong DOM để không mất chế độ xem khi chạy lại */}
+            {done && (
+              <div className="preview-fill" hidden={!showResult}>
+                <CompareViewer sid={sid} ver={done.ver} filter={bgFilter} color={bgColor} intensity={intensity} onIntensityCommit={setIntensity} />
+              </div>
+            )}
+            {!showResult && (
+              <div className="stage">
+                <BoxDrawer src={sessionUrl(sid, "original.jpg")} width={W} height={H} persons={persons} choice={choice} onPick={pickPerson}
+                           drawing={drawing} box={box} onCommit={setBox} dim={busy}>
+                  {busy && (
+                    <div className="busy">
+                      <Loader size={14} color="ink" />
+                      {seg.running ?? "Đang tách nền"}
+                    </div>
+                  )}
+                </BoxDrawer>
+              </div>
+            )}
           </div>
-        )}
-
-        <StepsPanel detect={detectStages} segment={seg.stages} segmentRunning={busy ? seg.running : null} engineLabel={engineLabel}
-                    quality={det.quality} applied={det.preprocess} debug={done && !busy ? { sid, ver: done.ver } : null} />
+          <StepsPanel detect={detectStages} segment={seg.stages} segmentRunning={busy ? seg.running : null} engineLabel={engineLabel}
+                      quality={det.quality} applied={det.preprocess} debug={done && !busy ? { sid, ver: done.ver } : null} />
+        </div>
       </div>
 
       <aside className="rail">
         <div className="rail-body">
-          {done && (
-            <div className={busy ? "is-stale" : undefined}>
-              <BibTag value={bibValue} detected={!!done.res.bib} onChange={setBibValue} />
-            </div>
-          )}
-
           <div>
             <h3 className="rail-title">Người chạy</h3>
             <div className="chips">
@@ -182,7 +183,7 @@ export function Workspace({ sid, det, detectStages, ready }: Props) {
           </div>
 
           {done && (
-            <div className={busy ? "is-stale" : undefined}>
+            <div className={busy ? "rail-scroll is-stale" : "rail-scroll"}>
               <BgFilterGrid sid={sid} ver={done.ver} filters={filters} active={bgFilter} color={bgColor}
                             onSelect={setBgFilter} onColorCommit={setBgColor} />
             </div>

@@ -81,20 +81,24 @@ export default function App() {
         <div className="layout">
           <div className="main">
             {state === "error" && <Alert color="red">{error} Bấm Đổi ảnh để thử ảnh khác.</Alert>}
-            {preview && (
-              <div className="stage">
-                <div className="frame" data-dim="true">
-                  <img src={preview} alt="Ảnh vừa tải lên" />
-                  {detecting && (
-                    <div className="busy">
-                      <Loader size={14} color="ink" />
-                      {poles.ready ? job.running ?? "Đang tải ảnh lên" : "Đang nạp model tìm gậy"}
+            <div className="preview-row">
+              <div className="preview">
+                {preview && (
+                  <div className="stage">
+                    <div className="frame" data-dim="true">
+                      <img src={preview} alt="Ảnh vừa tải lên" />
+                      {detecting && (
+                        <div className="busy">
+                          <Loader size={14} color="ink" />
+                          {poles.ready ? job.running ?? "Đang tải ảnh lên" : "Đang nạp model tìm gậy"}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
-            )}
-            <StepsPanel detect={job.stages} detectRunning={job.running} />
+              <StepsPanel detect={job.stages} detectRunning={job.running} />
+            </div>
           </div>
           <aside className="rail">
             <div className="rail-body">

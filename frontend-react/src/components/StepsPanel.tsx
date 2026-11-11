@@ -16,14 +16,14 @@ interface Props {
   debug?: { sid: string; ver: number } | null;
 }
 
-/** Các bước xử lý: gập lại mặc định để ảnh là thứ chính; nhớ trạng thái mở theo trình duyệt. */
+/** Các bước xử lý: cột dọc cạnh ảnh preview, mở mặc định; nhớ trạng thái mở theo trình duyệt. */
 export function StepsPanel({ detect, detectRunning, segment = [], segmentRunning, engineLabel, quality, applied, debug }: Props) {
-  const [open, setOpen] = useLocalStorage({ key: "runnerpop-steps-open", defaultValue: false });
+  const [open, setOpen] = useLocalStorage({ key: "runnerpop-steps-side-open", defaultValue: true });
   const count = detect.length + segment.length;
   const total = [...detect, ...segment].reduce((a, s) => a + s.seconds, 0);
 
   return (
-    <section className="steps">
+    <section className="steps" data-open={open}>
       <button type="button" className="steps-toggle" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <IconChevronRight size={16} />
         Các bước xử lý
@@ -40,7 +40,7 @@ export function StepsPanel({ detect, detectRunning, segment = [], segmentRunning
           <PipelineStrip title="Phát hiện người" stages={detect} running={detectRunning} />
           <PipelineStrip title={engineLabel ? `Tách nền bằng ${engineLabel}` : "Tách nền"} stages={segment} running={segmentRunning} />
           {debug && (
-            <SimpleGrid cols={{ base: 1, sm: 2 }} maw={560}>
+            <SimpleGrid cols={2} spacing="xs">
               <Stack gap={4}>
                 <Image src={sessionUrl(debug.sid, "alpha.png", { v: debug.ver })} radius={4} alt="Alpha matte" />
                 <Text size="xs" c="dimmed">Alpha matte</Text>
