@@ -42,7 +42,7 @@ export function BgFilterGrid({ sid, ver, filters, active, color, onSelect, onCol
       <div className="tiles">
         {filters.map((f, i) => (
           <button key={f.name} type="button" className="tile" data-on={f.name === active} aria-pressed={f.name === active} onClick={() => onSelect(f.name)}>
-            {previews[i]?.data ? <img src={previews[i].data} alt="" /> : <div className="tile-blank" />}
+            {previews[i]?.data ? <img src={previews[i].data} alt="" /> : <div className="tile-blank" data-loading={previews[i]?.isLoading ?? false} />}
             <span className="tile-label">{f.label}</span>
           </button>
         ))}

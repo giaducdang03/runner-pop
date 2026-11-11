@@ -8,6 +8,7 @@ import { Workspace } from "./components/Workspace";
 import { useHealth, useOptions } from "./hooks/useBackend";
 import { useDetect } from "./hooks/useDetect";
 import { usePrepare } from "./hooks/usePrepare";
+import { engineInfo } from "./lib/engineInfo";
 import { useSettings } from "./store/settings";
 
 const ACCEPT = ["image/jpeg", "image/png", "image/webp"];
@@ -24,9 +25,9 @@ function useObjectUrl(file: File | null) {
 }
 
 export default function App() {
-  useOptions(); // chọn engine mặc định ngay cả khi ngăn cài đặt đang đóng
-  const { isError, warming } = useHealth();
+  const { health, isError, warming } = useHealth();
   const { method, device, findPoles } = useSettings();
+  const { options } = useOptions();
   const [file, setFile] = useState<File | null>(null);
   const [settingsOpen, settings] = useDisclosure(false);
   const preview = useObjectUrl(file);
@@ -38,6 +39,9 @@ export default function App() {
 
   const { sid, det, job, state, error } = useDetect(file, poles.ready);
   const detecting = !!file && state !== "error" && !det;
+
+  const engineLabel = method ? engineInfo(method, options.engines.find((e) => e.name === method)?.label).title : "";
+  const hw = health?.device ? `${health.device.backend ?? "?"}${health.device.name && health.device.name !== "CPU" ? ` · ${health.device.name}` : ""}` : null;
 
   const preparing = warming || !ready;
   const status = isError
@@ -53,8 +57,13 @@ export default function App() {
       <header className="bar">
         <span className="wordmark">RunnerPop</span>
         <Group gap="md" wrap="nowrap">
+          <span className="mode" aria-label="Chế độ đang chạy">
+            {engineLabel && <span className="chip">{engineLabel}</span>}
+            {hw && <span className="chip">{hw}</span>}
+            <span className="chip" data-on={findPoles}>Dò gậy: {findPoles ? "Bật" : "Tắt"}</span>
+          </span>
           <span className="status" role="status">
-            {preparing && !isError && !prepFailed ? <Loader size={12} color="ink" /> : <i className="status-dot" data-error={isError || prepFailed} />}
+            {preparing && !isError && !prepFailed ? <Loader size={12} color="ink" /> : <i className="status-dot" data-error={isError || prepFailed} data-ready={status === "Sẵn sàng"} />}
             <span className="status-text">{status}</span>
           </span>
           {file && (

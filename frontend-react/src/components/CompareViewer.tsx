@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, SegmentedControl, Slider } from "@mantine/core";
+import { Alert, Loader, SegmentedControl, Slider } from "@mantine/core";
 import { sessionUrl } from "../api/client";
 
 // Xử lý ở độ phân giải vừa đủ để hiển thị (canvas chỉ hiện tối đa ~1100 px) -> ít pixel hơn, kéo mượt hơn
@@ -212,8 +212,14 @@ export function CompareViewer({ sid, ver, filter, color, intensity, onIntensityC
           onPointerMove={(e) => dragging.current && move(e)}
           onPointerUp={() => (dragging.current = false)}
         >
-          {loading && <div className="loadbar" />}
-          <canvas ref={cvRef} />
+          {loading && <div className="loadbar" role="progressbar" aria-label="Đang tải" />}
+          <canvas ref={cvRef} style={loading && baseVer > 0 ? { opacity: 0.55, transition: "opacity .15s" } : undefined} />
+          {loading && !error && (
+            <div className="busy">
+              <Loader size={14} color="ink" />
+              {baseVer > 0 ? "Đang áp dụng hiệu ứng nền" : "Đang tải kết quả"}
+            </div>
+          )}
           {(showSplit || mode === "side") && (
             <>
               <span className="tag" style={{ left: 10 }}>Trước</span>

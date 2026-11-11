@@ -42,9 +42,9 @@ docker compose -f docker-compose.yml -f docker-compose.intel.yml up --build
 docker compose -f docker-compose.yml -f docker-compose.cuda.yml up --build
 ```
 
-Mở `http://localhost:8501` (giao diện); backend ở `http://localhost:8000`. Dừng: `docker compose down`.
+Mở `http://localhost:5173` (giao diện React); backend ở `http://localhost:8000`. Dừng: `docker compose down`.
 
-- Một `Dockerfile`, nhiều target: `frontend` (Streamlit, không có torch), `cpu`, `intel` (base `openvino/ubuntu24_runtime`, Python 3.12), `cuda`.
+- Một `Dockerfile`, nhiều target: `frontend` (React build + nginx, proxy `/api` sang backend, không có torch/Streamlit), `cpu`, `intel` (base `openvino/ubuntu24_runtime`, Python 3.12), `cuda`.
 - Cache model nằm **trên host** ở `./docker-data/cache` (BiRefNet ~224 MB tải lần đầu, OpenVINO IR, cache JIT numba);
   xoá thư mục này để tải/xuất lại. Đổi chỗ bằng biến `RUNNERPOP_CACHE`. Trọng số YOLO có sẵn trong image.
 - Biến tuỳ chỉnh khi chạy compose: `DEFAULT_ENGINE`, `MAX_SESSIONS`, `BACKEND_PORT`, `FRONTEND_PORT`, `RUNNERPOP_CACHE`,

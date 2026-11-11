@@ -1,4 +1,4 @@
-# Mặc định: backend chạy CPU.  docker compose up --build  ->  http://localhost:8501
+# Mặc định: backend chạy CPU.  docker compose up --build  ->  http://localhost:5173
 # GPU Intel:   docker compose -f docker-compose.yml -f docker-compose.intel.yml up --build
 # GPU NVIDIA:  docker compose -f docker-compose.yml -f docker-compose.cuda.yml up --build
 #
@@ -37,10 +37,8 @@ services:
       context: .
       target: frontend
     image: runnerpop-frontend:latest
-    environment:
-      API_URL: http://backend:8000
     ports:
-      - "${FRONTEND_PORT:-8501}:8501"
+      - "${FRONTEND_PORT:-5173}:80"
     depends_on:
       backend:
         condition: service_healthy

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Alert, Divider, MultiSelect, Select, SegmentedControl, Slider, Stack, Switch, Text } from "@mantine/core";
+import { Alert, Badge, Divider, Group, MultiSelect, Select, SegmentedControl, Slider, Stack, Switch, Text } from "@mantine/core";
 import { useHealth, useOptions } from "../hooks/useBackend";
 import { usePrepare } from "../hooks/usePrepare";
+import { engineInfo } from "../lib/engineInfo";
 import { useSettings } from "../store/settings";
 import { PrepareStatus } from "./PrepareStatus";
 
@@ -34,7 +35,8 @@ export function SettingsSidebar() {
   const { options } = useOptions();
   const { health, isError, warming } = useHealth();
 
-  const engineLabel = (n: string) => options.engines.find((e) => e.name === n)?.label ?? n;
+  const infoOf = (n: string) => engineInfo(n, options.engines.find((e) => e.name === n)?.label);
+  const engineLabel = (n: string) => infoOf(n).title;
   const prep = usePrepare(s.method || undefined, s.device);
   const poles = usePrepare("poles", s.device, s.findPoles);
   const devices = options.devices ?? ["auto", "cpu", "gpu"];
@@ -48,9 +50,25 @@ export function SettingsSidebar() {
         onChange={(e) => s.set({ auto: e.currentTarget.checked })}
       />
 
-      <Field label="Thuật toán tách nền">
-        <Select data={options.engines.map((e) => ({ value: e.name, label: e.label }))} value={s.method || null}
-                allowDeselect={false} onChange={(v) => v && s.set({ method: v })} />
+      <Field label="Cách tách nền" hint={infoOf(s.method).desc}>
+        <Select
+          data={options.engines.map((e) => ({ value: e.name, label: infoOf(e.name).title }))}
+          value={s.method || null}
+          allowDeselect={false}
+          onChange={(v) => v && s.set({ method: v })}
+          renderOption={({ option, checked }) => {
+            const i = infoOf(option.value);
+            return (
+              <Stack gap={2} style={{ flex: 1 }}>
+                <Group gap={8} wrap="nowrap">
+                  <Text size="sm" fw={checked ? 600 : 500}>{i.title}</Text>
+                  {i.badge && <Badge size="xs" variant="light" color="gray">{i.badge}</Badge>}
+                </Group>
+                {i.desc && <Text size="xs" c="dimmed">{i.desc}</Text>}
+              </Stack>
+            );
+          }}
+        />
       </Field>
       <PrepareStatus prep={prep} label={engineLabel(s.method)} device={s.device} />
 

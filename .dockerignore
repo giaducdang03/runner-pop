@@ -1,8 +1,10 @@
 # Chỉ gửi vào build context những gì image cần (allowlist)
 *
 !backend/
-!frontend/
+!frontend-react/
 !docker/
 !requirements.txt
 **/__pycache__
 **/*.pyc
+**/node_modules
+**/dist

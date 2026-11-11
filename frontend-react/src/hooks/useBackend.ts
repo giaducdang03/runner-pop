@@ -15,9 +15,10 @@ export function useOptions() {
   const set = useSettings((s) => s.set);
 
   useEffect(() => {
+    if (!q.data) return; // chưa có danh sách thật thì đừng chọn từ danh sách dự phòng (sẽ kẹt ở GrabCut)
     const names = options.engines.map((e) => e.name);
     if (!names.includes(method)) set({ method: pickDefaultEngine(options, names) });
-  }, [options, method, set]);
+  }, [q.data, options, method, set]);
 
   return { options, isError: q.isError };
 }

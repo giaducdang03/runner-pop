@@ -321,10 +321,40 @@ def _ov_convert(ov, onnx_path: str, static_input):
     return ov.convert_model(onnx_path)
 
 
+def _load_ir(ov, onnx_path: str, static_input):
+    """Convert ONNX -> OpenVINO rất chậm với model lớn (BiRefNet) và lần nào khởi động cũng lặp lại
+    (CACHE_DIR chỉ bỏ qua bước compile GPU). Lưu IR vào <ACCEL_CACHE_DIR>/ir/ để các lần sau chỉ đọc file."""
+    import hashlib
+    import shutil
+    import tempfile
+
+    st = os.stat(onnx_path)
+    tag = hashlib.sha1(f"{st.st_size}:{st.st_mtime_ns}:{sorted((static_input or {}).items())}".encode()).hexdigest()[:12]
+    final = Path(C.ACCEL_CACHE_DIR) / "ir" / f"{Path(onnx_path).stem}_{tag}"
+    xml = final / "model.xml"
+    if xml.exists():
+        try:
+            return ov.Core().read_model(str(xml))
+        except Exception:
+            shutil.rmtree(final, ignore_errors=True)  # IR hỏng -> convert lại
+    model = _ov_convert(ov, onnx_path, static_input)
+    try:
+        final.parent.mkdir(parents=True, exist_ok=True)
+        tmp = Path(tempfile.mkdtemp(dir=final.parent, prefix=".tmp_"))
+        ov.save_model(model, str(tmp / "model.xml"), compress_to_fp16=False)
+        try:
+            os.replace(tmp, final)  # đổi tên cả thư mục: không bao giờ để lại IR dở dang
+        except OSError:
+            shutil.rmtree(tmp, ignore_errors=True)
+    except Exception:
+        pass  # không ghi được cache thì vẫn dùng model vừa convert
+    return model
+
+
 def _build_openvino(onnx_path: str, device: Device, static_input) -> Runner:
     import openvino as ov
 
-    model = _ov_convert(ov, onnx_path, static_input)
+    model = _load_ir(ov, onnx_path, static_input)
     cfg = {"CACHE_DIR": C.ACCEL_CACHE_DIR,
            "INFERENCE_PRECISION_HINT": "f16" if device.dtype == "fp16" else "f32"}
     cm = ov.Core().compile_model(model, device.ov_device_name, cfg)

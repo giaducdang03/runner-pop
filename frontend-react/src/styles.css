@@ -201,7 +201,8 @@ input:focus-visible {
 .loadbar {
   position: absolute;
   inset: 0 0 auto 0;
-  height: 3px;
+  height: 4px;
+  background: rgba(0, 0, 0, 0.08);
   overflow: hidden;
   z-index: 2;
 }
@@ -682,5 +683,56 @@ input:focus-visible {
   .steps-toggle svg,
   .drop {
     transition: none;
+  }
+}
+
+.mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.chip {
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--mute);
+  white-space: nowrap;
+}
+.chip[data-on="true"] {
+  color: var(--ink);
+  border-color: var(--ink);
+}
+@media (max-width: 900px) {
+  .mode .chip:not([data-on]) {
+    display: none;
+  }
+}
+
+/* Select / MultiSelect không gõ chữ: con trỏ bấm, không hiện dấu nháy soạn thảo */
+.mantine-Select-input,
+.mantine-MultiSelect-inputField,
+.mantine-MultiSelect-input {
+  cursor: pointer;
+  caret-color: transparent;
+}
+
+.status-dot[data-ready="true"] {
+  background: #12b76a;
+}
+
+/* Ô hiệu ứng đang tải ảnh xem trước: vệt sáng chạy ngang */
+.tile-blank[data-loading="true"] {
+  background: linear-gradient(90deg, var(--ash) 25%, var(--line) 50%, var(--ash) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.2s linear infinite;
+}
+@keyframes shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tile-blank[data-loading="true"] {
+    animation: none;
   }
 }

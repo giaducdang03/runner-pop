@@ -5,6 +5,7 @@ import type { DetectResult, Stage } from "../api/types";
 import { useHealth, useOptions } from "../hooks/useBackend";
 import { useJob } from "../hooks/useJob";
 import { shouldAutoRun } from "../lib/uiHelpers";
+import { engineInfo } from "../lib/engineInfo";
 import { useSettings } from "../store/settings";
 import { BgFilterGrid } from "./BgFilterGrid";
 import { BoxDrawer, type BoxT } from "./BoxDrawer";
@@ -95,7 +96,7 @@ export function Workspace({ sid, det, detectStages, ready }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sig, auto, warming, busy, ready, hasTarget]);
 
-  const engineLabel = options.engines.find((e) => e.name === method)?.label ?? method;
+  const engineLabel = engineInfo(method, options.engines.find((e) => e.name === method)?.label).title;
   const segErr = startError ?? (seg.state === "error" ? seg.error : null);
   const showResult = view === "result" && !!done && !busy;
   const lowFocus = done?.res.focus_confidence != null && done.res.focus_confidence < (options.focus_conf_min ?? 1.3);

@@ -1,22 +1,29 @@
 # syntax=docker/dockerfile:1
 # Các target:
-#   frontend  giao diện Streamlit (nhẹ, không có torch)
+#   frontend  giao diện React (build tĩnh + nginx, không có torch)
 #   cpu       backend chạy CPU, mọi máy
 #   intel     backend OpenVINO trên GPU Intel (Arc / iGPU); base có sẵn Intel compute runtime
 #   cuda      backend GPU NVIDIA (torch CUDA + onnxruntime-gpu); cần NVIDIA Container Toolkit trên host
 # Dùng qua docker compose (docker-compose.yml + docker-compose.intel.yml / docker-compose.cuda.yml).
 
 ARG PY_IMAGE=python:3.13-slim
+ARG NODE_IMAGE=node:22-alpine
+ARG NGINX_IMAGE=nginx:1.27-alpine
 ARG OPENVINO_IMAGE=openvino/ubuntu24_runtime:2026.4.1
 
-# ------------------------------------------------------------------ frontend
-FROM ${PY_IMAGE} AS frontend
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+# ------------------------------------------------------------------ frontend (React)
+# Build Vite ở stage node, chỉ giữ file tĩnh trong nginx; nginx cũng proxy /api -> backend.
+FROM ${NODE_IMAGE} AS frontend-build
 WORKDIR /app
-RUN pip install --no-cache-dir streamlit requests
-COPY frontend/ frontend/
-EXPOSE 8501
-CMD ["streamlit", "run", "frontend/app.py", "--server.address", "0.0.0.0", "--server.port", "8501", "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+COPY frontend-react/package.json frontend-react/package-lock.json ./
+RUN npm ci
+COPY frontend-react/ ./
+RUN npm run build
+
+FROM ${NGINX_IMAGE} AS frontend
+COPY frontend-react/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=frontend-build /app/dist /usr/share/nginx/html
+EXPOSE 80
 
 # ------------------------------------------------------------------ cpu
 FROM ${PY_IMAGE} AS cpu
